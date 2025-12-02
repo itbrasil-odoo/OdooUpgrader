@@ -104,6 +104,26 @@ output/
 └── odoo.log             # Upgrade process logs
 ```
 
+## 🏗 Architecture
+
+```mermaid
+graph TD
+    A[Input Source] --> B{File Type?}
+    B -->|ZIP| C[Extract ZIP]
+    B -->|DUMP| D[Copy DUMP]
+    C --> E[Database Container]
+    D --> E
+    E --> F[Restore Database]
+    F --> G[Get Current Version]
+    G --> H{Current < Target?}
+    H -->|Yes| I[Build Upgrade Container]
+    I --> J[Run OpenUpgrade]
+    J --> K[Update Database]
+    K --> L[Get New Version]
+    L --> H
+    H -->|No| M[Create Final Package]
+    M --> N[Cleanup]
+```
 
 ## 🔍 Supported Versions
 
