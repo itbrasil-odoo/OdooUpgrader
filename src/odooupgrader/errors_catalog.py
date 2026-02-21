@@ -2,7 +2,6 @@
 
 from typing import Dict
 
-
 _ERROR_MESSAGES: Dict[str, Dict[str, str]] = {
     "invalid_source_format": {
         "what": "Invalid source format. Supported formats are `.zip` and `.dump`.",

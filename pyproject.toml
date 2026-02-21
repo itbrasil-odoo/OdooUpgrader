@@ -66,6 +66,10 @@ select = [
     "I",
     "B",
 ]
+ignore = [
+    "E501",
+    "B904",
+]
 
 [tool.mypy]
 python_version = "3.9"

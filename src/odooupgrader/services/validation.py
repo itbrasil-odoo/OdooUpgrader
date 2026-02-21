@@ -8,8 +8,8 @@ from urllib.parse import urlparse
 import requests
 
 from odooupgrader.constants import ADDONS_ZIP_EXTENSION, SOURCE_EXTENSIONS
-from odooupgrader.errors_catalog import actionable_error
 from odooupgrader.errors import UpgraderError
+from odooupgrader.errors_catalog import actionable_error
 
 
 class ValidationService:

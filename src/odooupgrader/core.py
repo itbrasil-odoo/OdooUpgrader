@@ -4,7 +4,6 @@ import re
 import secrets
 import shutil
 import subprocess
-import sys
 import uuid
 import zipfile
 from dataclasses import asdict
@@ -23,8 +22,8 @@ from .models import RunContext
 from .services.archive import ArchiveService
 from .services.command_runner import CommandRunner
 from .services.database import DatabaseService
-from .services.download import DownloadService
 from .services.docker_runtime import DockerRuntimeService
+from .services.download import DownloadService
 from .services.filesystem import FileSystemService
 from .services.manifest import ManifestService
 from .services.state import StateService
