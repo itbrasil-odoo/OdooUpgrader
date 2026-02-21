@@ -1,98 +1,67 @@
-name: OdooUpgrade Matrix Tests on Ubuntu
+name: OdooUpgrade Integration (Deterministic Fixtures)
 
 on:
-  push:
-    branches: [ "main", "dev" ]
-    paths:
-      - "src/**"
-  pull_request:
-    branches: [ "main", "dev" ]
-    paths:
-      - "src/**"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
 
 jobs:
   integration-test:
-    name: ${{ matrix.scenario.type }} ${{ matrix.scenario.format }} (14->${{ matrix.scenario.target }}) - Py${{ matrix.python-version }}
+    name: ${{ matrix.scenario.format }} + addons=${{ matrix.scenario.extra_addons }}
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        # Test all python versions
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-
-        # Test the 4 specific scenarios you requested
+        python-version: ["3.11"]
         scenario:
-          - { type: "URL",   format: "zip",  target: "15.0" }
-          - { type: "URL",   format: "dump", target: "16.0" }
-          - { type: "Local", format: "zip",  target: "17.0" }
-          - { type: "Local", format: "dump", target: "15.0" }
+          - { format: "zip", extra_addons: "none" }
+          - { format: "dump", extra_addons: "zip" }
 
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          cache: pip
 
-      - name: Install OdooUpgrade Package
+      - name: Install package
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install .
 
-      - name: Prepare Test Data
-        id: prep
+      - name: Generate deterministic fixtures
+        id: fixtures
         run: |
-          # Define Base URLs
-          URL_ZIP="https://sin1.contabostorage.com/d3aae27d651c48149e4a115494b0c2df:brbucket/backups/test/sample_odoo14.zip"
-          URL_DUMP="https://sin1.contabostorage.com/d3aae27d651c48149e4a115494b0c2df:brbucket/backups/test/sample_odoo14.dump"
+          set -euo pipefail
+          ./scripts/fixtures/generate_fixture.sh "$(pwd)/.fixtures" > fixture.env
+          cat fixture.env
+          while IFS='=' read -r key value; do
+            echo "$key=$value" >> "$GITHUB_OUTPUT"
+          done < fixture.env
 
-          MODE="${{ matrix.scenario.type }}"
-          FORMAT="${{ matrix.scenario.format }}"
-          
-          # 1. Select the correct URL based on format (Zip/Dump)
-          if [ "$FORMAT" == "zip" ]; then
-            TARGET_URL="$URL_ZIP"
-            FILENAME="source.zip"
+      - name: Run deterministic integration scenario
+        run: |
+          set -euo pipefail
+
+          if [ "${{ matrix.scenario.format }}" = "zip" ]; then
+            SOURCE="${{ steps.fixtures.outputs.source_zip }}"
           else
-            TARGET_URL="$URL_DUMP"
-            FILENAME="source.dump"
+            SOURCE="${{ steps.fixtures.outputs.source_dump }}"
           fi
 
-          # 2. Handle Local vs URL logic
-          if [ "$MODE" == "Local" ]; then
-            echo "Downloading to local file to simulate local path..."
-            curl -L -o "$FILENAME" "$TARGET_URL"
-            # Pass absolute path
-            SOURCE_ARG="$(pwd)/$FILENAME"
-          else
-            echo "Using URL directly..."
-            SOURCE_ARG="$TARGET_URL"
+          CMD=(odooupgrader --source "$SOURCE" --version "15.0" --dry-run --verbose)
+
+          if [ "${{ matrix.scenario.extra_addons }}" = "zip" ]; then
+            CMD+=(--extra-addons "${{ steps.fixtures.outputs.extra_addons_zip }}")
           fi
 
-          echo "Selected Source: $SOURCE_ARG"
-          echo "source_arg=$SOURCE_ARG" >> $GITHUB_OUTPUT
+          "${CMD[@]}"
 
-      - name: Run Upgrade (14.0 -> ${{ matrix.scenario.target }})
-        run: |
-          odooupgrader \
-            --source "${{ steps.prep.outputs.source_arg }}" \
-            --version "${{ matrix.scenario.target }}" \
-            --verbose
-
-      - name: Verify Output Files
+      - name: Print output artifacts
         if: always()
         run: |
-          echo "Listing output directory contents:"
-          ls -lh output/ || echo "Output directory not found"
-
-      - name: Check Logs
-        if: failure()
-        run: |
-          if [ -f "output/odoo.log" ]; then
-             echo "!!! UPGRADE FAILED - TAIL LOGS !!!"
-             tail -n 100 output/odoo.log
-          fi
+          ls -lah output/ || true

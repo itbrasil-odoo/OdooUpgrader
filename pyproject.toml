@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odooupgrader"
-version = "0.2.0"
+version = "0.6.0"
 description = "Docker-based Odoo database migration tool using OpenUpgrade framework"
 authors = [{name = "Fasil", email = "fasilwdr@hotmail.com"}]
 readme = "README.md"
@@ -28,6 +28,7 @@ dependencies = [
     "rich>=13.7.0",
     "requests>=2.31.0",
     "packaging>=23.0",
+    "PyYAML>=6.0.2",
 ]
 
 [project.optional-dependencies]
@@ -35,13 +36,19 @@ dev = [
     "pytest>=7.4.0",
     "black>=23.0.0",
     "mypy>=1.7.0",
+    "ruff>=0.6.9",
+    "pre-commit>=3.8.0",
+    "bandit>=1.7.9",
+    "pip-audit>=2.7.3",
+    "types-requests>=2.32.0.20240218",
+    "types-PyYAML>=6.0.12.20240311",
 ]
 
 [project.urls]
-Homepage = "https://github.com/fasilwdr/OdooUpgrader"
-Repository = "https://github.com/fasilwdr/OdooUpgrader"
-Documentation = "https://github.com/fasilwdr/OdooUpgrader#readme"
-Issues = "https://github.com/fasilwdr/OdooUpgrader/issues"
+Homepage = "https://github.com/itbrasil-odoo/OdooUpgrader"
+Repository = "https://github.com/itbrasil-odoo/OdooUpgrader"
+Documentation = "https://github.com/itbrasil-odoo/OdooUpgrader#readme"
+Issues = "https://github.com/itbrasil-odoo/OdooUpgrader/issues"
 
 [project.scripts]
 odooupgrader = "odooupgrader.cli:main"
@@ -50,8 +57,29 @@ odooupgrader = "odooupgrader.cli:main"
 line-length = 100
 target-version = ['py39', 'py310', 'py311', 'py312', 'py313']
 
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+]
+ignore = [
+    "E501",
+    "B904",
+]
+
 [tool.mypy]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

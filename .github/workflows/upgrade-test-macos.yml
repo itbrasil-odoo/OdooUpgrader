@@ -2,13 +2,20 @@ name: OdooUpgrade Installation Test on macOS
 
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: [ "main", "dev", "hardening/**" ]
     paths:
       - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/**"
   pull_request:
     branches: [ "main", "dev" ]
     paths:
       - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/**"
+  workflow_dispatch:
 
 jobs:
   smoke-test:

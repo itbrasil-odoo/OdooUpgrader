@@ -2,10 +2,10 @@
 OdooUpgrader - Professional Odoo database upgrade tool
 """
 
-__version__ = "0.2.0"
+__version__ = "0.6.0"
 __author__ = "Fasil"
 __email__ = "fasilwdr@hotmail.com"
 
-from .core import OdooUpgrader
+from .core import OdooUpgrader, UpgraderError
 
-__all__ = ["OdooUpgrader"]
+__all__ = ["OdooUpgrader", "UpgraderError"]
