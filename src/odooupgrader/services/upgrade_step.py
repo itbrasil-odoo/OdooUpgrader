@@ -33,7 +33,6 @@ COPY --chown=odoo:odoo ./output/custom_addons/ /mnt/custom-addons/
         return f"""
 FROM odoo:{target_version}
 USER root
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 COPY --chown=odoo:odoo ./{openupgrade_cache_relpath}/ /mnt/extra-addons/
 RUN pip3 install --no-cache-dir -r /mnt/extra-addons/requirements.txt
 
@@ -283,8 +282,7 @@ networks:
         retry_backoff_seconds: float = 0.0,
     ) -> str:
         version_cache_path = os.path.join(cache_root, target_version)
-        git_dir = os.path.join(version_cache_path, ".git")
-        if os.path.isdir(git_dir):
+        if self._is_cache_ready(version_cache_path):
             self.logger.debug("Using cached OpenUpgrade source for %s at %s", target_version, version_cache_path)
             return version_cache_path
 
@@ -315,4 +313,25 @@ networks:
             )
         except TypeError:
             run_cmd(clone_cmd, check=True, capture_output=True)
+
+        os.makedirs(version_cache_path, exist_ok=True)
+        requirements_file = os.path.join(version_cache_path, "requirements.txt")
+        if os.path.isdir(version_cache_path) and not os.path.exists(requirements_file):
+            self.logger.warning(
+                "OpenUpgrade cache at %s has no requirements.txt. Creating empty placeholder.",
+                version_cache_path,
+            )
+            with open(requirements_file, "w", encoding="utf-8") as file_obj:
+                file_obj.write("")
+
+        if not self._is_cache_ready(version_cache_path):
+            raise UpgraderError(
+                f"OpenUpgrade cache for {target_version} was not prepared correctly at {version_cache_path}."
+            )
         return version_cache_path
+
+    @staticmethod
+    def _is_cache_ready(version_cache_path: str) -> bool:
+        return os.path.isdir(version_cache_path) and os.path.isfile(
+            os.path.join(version_cache_path, "requirements.txt")
+        )

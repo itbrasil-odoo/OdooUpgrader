@@ -106,3 +106,49 @@ def test_run_upgrade_step_respects_timeout(monkeypatch, tmp_path):
     )
 
     assert result is False
+
+
+def test_ensure_openupgrade_cache_reuses_existing_version(tmp_path):
+    service = UpgradeStepService(logger=DummyLogger(), console=DummyConsole())
+    cache_root = tmp_path / ".cache" / "openupgrade"
+    version_cache = cache_root / "15.0"
+    version_cache.mkdir(parents=True)
+    (version_cache / "requirements.txt").write_text("psycopg2\n", encoding="utf-8")
+
+    calls = []
+
+    def fake_run_cmd(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    result = service.ensure_openupgrade_cache(
+        target_version="15.0",
+        cache_root=str(cache_root),
+        run_cmd=fake_run_cmd,
+    )
+
+    assert result == str(version_cache)
+    assert calls == []
+
+
+def test_ensure_openupgrade_cache_clones_when_missing(tmp_path):
+    service = UpgradeStepService(logger=DummyLogger(), console=DummyConsole())
+    cache_root = tmp_path / ".cache" / "openupgrade"
+
+    calls = []
+
+    def fake_run_cmd(cmd, **_kwargs):
+        calls.append(cmd)
+        version_cache = cache_root / "16.0"
+        version_cache.mkdir(parents=True, exist_ok=True)
+        (version_cache / "requirements.txt").write_text("openupgradelib\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    result = service.ensure_openupgrade_cache(
+        target_version="16.0",
+        cache_root=str(cache_root),
+        run_cmd=fake_run_cmd,
+    )
+
+    assert result.endswith("16.0")
+    assert calls
