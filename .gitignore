@@ -171,3 +171,6 @@ odoo-upgrade-composer.yml
 
 # Local uv lockfile (not part of project packaging workflow)
 uv.lock
+
+# Local deterministic fixture workspace (generated during manual integration tests)
+.fixtures-local/
