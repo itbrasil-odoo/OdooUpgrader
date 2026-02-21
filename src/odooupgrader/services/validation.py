@@ -117,36 +117,37 @@ class ValidationService:
         if not addons_path.exists() or not addons_path.is_dir():
             raise UpgraderError(f"Extra addons directory not found: {addons_path}")
 
-        if self._is_odoo_module(addons_path):
-            self._validate_manifest(addons_path)
-            return
-
-        module_dirs = [
-            item
-            for item in addons_path.iterdir()
-            if item.is_dir() and not item.name.startswith(".") and item.name != "__pycache__"
-        ]
-
+        module_dirs = self._discover_module_dirs(addons_path)
         if not module_dirs:
             raise UpgraderError(
                 f"No addon modules found in '{addons_path}'. "
                 "Provide a directory containing at least one valid Odoo module."
             )
 
-        valid_modules = 0
         for module_dir in module_dirs:
-            if self._is_odoo_module(module_dir):
-                self._validate_manifest(module_dir)
-                valid_modules += 1
-
-        if valid_modules == 0:
-            raise UpgraderError(
-                f"No valid Odoo module manifests found in '{addons_path}'. "
-                "Each module must include `__manifest__.py` or `__openerp__.py`."
-            )
+            self._validate_manifest(module_dir)
 
     def _is_odoo_module(self, path: Path) -> bool:
         return any((path / manifest_name).is_file() for manifest_name in self.MANIFEST_FILES)
+
+    def _discover_module_dirs(self, addons_path: Path):
+        discovered = set()
+
+        if self._is_odoo_module(addons_path):
+            discovered.add(addons_path.resolve())
+
+        for manifest_name in self.MANIFEST_FILES:
+            for manifest_path in addons_path.rglob(manifest_name):
+                if not manifest_path.is_file():
+                    continue
+                if self._is_hidden_or_cache_path(manifest_path):
+                    continue
+                discovered.add(manifest_path.parent.resolve())
+
+        return sorted(discovered)
+
+    def _is_hidden_or_cache_path(self, path: Path) -> bool:
+        return any(part.startswith(".") or part == "__pycache__" for part in path.parts)
 
     def _validate_manifest(self, module_path: Path):
         manifest_file = None
@@ -173,12 +174,9 @@ class ValidationService:
             raise UpgraderError(f"Manifest '{manifest_file}' must define a dictionary.")
 
         name = manifest_data.get("name")
-        depends = manifest_data.get("depends")
+        depends = manifest_data.get("depends", [])
         if not isinstance(name, str) or not name.strip():
             raise UpgraderError(f"Manifest '{manifest_file}' must define a non-empty 'name'.")
-
-        if depends is None:
-            raise UpgraderError(f"Manifest '{manifest_file}' must define 'depends'.")
 
         if not isinstance(depends, (list, tuple)) or not all(
             isinstance(dep, str) and dep.strip() for dep in depends
