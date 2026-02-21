@@ -25,9 +25,12 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from .constants import ADDONS_ZIP_EXTENSION, DIR_MODE, FILE_MODE, SCRIPT_MODE, SOURCE_EXTENSIONS
+from .constants import DIR_MODE, FILE_MODE, SCRIPT_MODE
 from .errors import UpgraderError
 from .models import RunContext
+from .services.archive import ArchiveService
+from .services.filesystem import FileSystemService
+from .services.validation import ValidationService
 
 console = Console()
 logger = logging.getLogger("odooupgrader")
@@ -64,6 +67,13 @@ class OdooUpgrader:
         self.output_dir = os.path.join(self.cwd, "output")
         self.filestore_dir = os.path.join(self.output_dir, "filestore")
         self.custom_addons_dir = os.path.join(self.output_dir, "custom_addons")
+
+        self.filesystem_service = FileSystemService(logger=logger, console=console)
+        self.archive_service = ArchiveService()
+        self.validation_service = ValidationService(
+            allow_insecure_http=self.allow_insecure_http,
+            requests_module=requests,
+        )
 
         self.compose_cmd = self._get_docker_compose_cmd()
         self.run_context = self._build_run_context()
@@ -150,116 +160,31 @@ class OdooUpgrader:
                 )
 
     def _is_url(self, location: str) -> bool:
-        scheme = urlparse(location).scheme.lower()
-        return scheme in {"http", "https"}
+        return self.validation_service.is_url(location)
 
     def _get_location_extension(self, location: str) -> str:
-        path = urlparse(location).path if self._is_url(location) else location
-        return Path(path).suffix.lower()
+        return self.validation_service.get_location_extension(location)
 
     def _ensure_supported_source_extension(self, location: str):
-        ext = self._get_location_extension(location)
-        if ext not in SOURCE_EXTENSIONS:
-            raise UpgraderError(
-                "Invalid source format. Supported formats are `.zip` and `.dump`. "
-                "Provide a source file/URL ending with one of these extensions."
-            )
+        self.validation_service.ensure_supported_source_extension(location)
 
     def _ensure_supported_addons_extension(self, location: str):
-        ext = self._get_location_extension(location)
-        if ext != ADDONS_ZIP_EXTENSION:
-            raise UpgraderError("Invalid addons format. Remote or file addons must be a `.zip` file.")
+        self.validation_service.ensure_supported_addons_extension(location)
 
     def _enforce_https_policy(self, location: str, label: str):
-        if not self._is_url(location):
-            return
-
-        scheme = urlparse(location).scheme.lower()
-        if scheme == "http" and not self.allow_insecure_http:
-            raise UpgraderError(
-                f"{label} uses insecure HTTP. Use HTTPS instead, or pass "
-                "`--allow-insecure-http` only when you explicitly trust the endpoint."
-            )
-
-        if scheme == "http" and self.allow_insecure_http:
-            logger.warning("Insecure HTTP enabled for %s: %s", label, location)
-            console.print(
-                f"[yellow]Warning:[/yellow] Using insecure HTTP for {label}. "
-                "Prefer HTTPS whenever possible."
-            )
+        self.validation_service.enforce_https_policy(location, label, logger, console)
 
     def _probe_url(self, location: str, label: str):
-        """Checks remote accessibility with HEAD, then GET fallback."""
-        self._enforce_https_policy(location, label)
-
-        last_error: Optional[Exception] = None
-        for method in ("HEAD", "GET"):
-            try:
-                response = requests.request(
-                    method,
-                    location,
-                    allow_redirects=True,
-                    timeout=30,
-                    stream=(method == "GET"),
-                )
-                response.raise_for_status()
-                response.close()
-                return
-            except requests.RequestException as exc:
-                last_error = exc
-
-        raise UpgraderError(f"{label} is not accessible: {last_error}")
+        self.validation_service.probe_url(location, label, logger, console)
 
     def _is_within_dir(self, base_dir: Path, candidate: Path) -> bool:
-        try:
-            return os.path.commonpath([str(base_dir), str(candidate)]) == str(base_dir)
-        except ValueError:
-            return False
+        return self.archive_service.is_within_dir(base_dir, candidate)
 
     def _safe_extract_zip(self, zip_path: str, destination_dir: str):
-        """Extract zip safely to block path traversal and symlinks."""
-        base = Path(destination_dir).resolve()
-
-        try:
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                for member in zip_ref.infolist():
-                    normalized_name = member.filename.replace("\\", "/")
-                    target_path = (base / normalized_name).resolve()
-
-                    if not self._is_within_dir(base, target_path):
-                        raise UpgraderError(
-                            f"Unsafe ZIP entry detected: `{member.filename}`. "
-                            "Archive extraction aborted to prevent path traversal."
-                        )
-
-                    file_type = (member.external_attr >> 16) & 0o170000
-                    if file_type == 0o120000:
-                        raise UpgraderError(
-                            f"Unsafe ZIP entry detected: `{member.filename}` is a symbolic link."
-                        )
-
-                for member in zip_ref.infolist():
-                    normalized_name = member.filename.replace("\\", "/")
-                    target_path = (base / normalized_name).resolve()
-
-                    if member.is_dir() or normalized_name.endswith("/"):
-                        target_path.mkdir(parents=True, exist_ok=True)
-                        continue
-
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    with zip_ref.open(member, "r") as src, open(target_path, "wb") as dst:
-                        shutil.copyfileobj(src, dst)
-        except zipfile.BadZipFile as exc:
-            raise UpgraderError(f"Invalid ZIP archive: {zip_path}") from exc
+        self.archive_service.safe_extract_zip(zip_path, destination_dir)
 
     def _set_permissions(self, path: str, mode: int):
-        if sys.platform == "win32":
-            return
-
-        try:
-            os.chmod(path, mode)
-        except Exception as exc:
-            logger.warning("Could not set permissions on %s: %s", path, exc)
+        self.filesystem_service.set_permissions(path, mode)
 
     def _set_tree_permissions(
         self,
@@ -267,25 +192,10 @@ class OdooUpgrader:
         dir_mode: int = DIR_MODE,
         file_mode: int = FILE_MODE,
     ):
-        if sys.platform == "win32" or not os.path.exists(root):
-            return
-
-        for current_root, dirs, files in os.walk(root):
-            for directory in dirs:
-                self._set_permissions(os.path.join(current_root, directory), dir_mode)
-            for file_name in files:
-                mode = SCRIPT_MODE if file_name.endswith(".sh") else file_mode
-                self._set_permissions(os.path.join(current_root, file_name), mode)
+        self.filesystem_service.set_tree_permissions(root, dir_mode, file_mode, SCRIPT_MODE)
 
     def _cleanup_dir(self, path: str):
-        if os.path.exists(path):
-            try:
-                shutil.rmtree(path)
-                logger.debug("Removed directory: %s", path)
-            except Exception as exc:
-                message = f"Warning: Could not remove {path}: {exc}"
-                console.print(f"[yellow]{message}[/yellow]")
-                logger.warning(message)
+        self.filesystem_service.cleanup_dir(path)
 
     def validate_docker_environment(self):
         console.print("[blue]Validating Docker environment...[/blue]")
@@ -297,43 +207,20 @@ class OdooUpgrader:
         """Checks source and addons inputs early with strict validation."""
         console.print("[blue]Validating source accessibility...[/blue]")
         logger.info("Validating source: %s", self.source)
+        if self.extra_addons:
+            console.print("[blue]Validating extra addons...[/blue]")
 
-        self._ensure_supported_source_extension(self.source)
+        self.validation_service.validate_source_accessibility(
+            source=self.source,
+            extra_addons=self.extra_addons,
+            logger=logger,
+            console=console,
+        )
 
         if self._is_url(self.source):
-            self._probe_url(self.source, "source URL")
             console.print("[green]Source URL is accessible.[/green]")
         else:
-            if not os.path.exists(self.source):
-                raise UpgraderError(f"Source file not found: {self.source}")
-            if not os.path.isfile(self.source):
-                raise UpgraderError(f"Source path must be a file: {self.source}")
             console.print("[green]Source file exists.[/green]")
-
-        if not self.extra_addons:
-            return
-
-        console.print("[blue]Validating extra addons...[/blue]")
-
-        if self._is_url(self.extra_addons):
-            self._ensure_supported_addons_extension(self.extra_addons)
-            self._probe_url(self.extra_addons, "extra addons URL")
-            return
-
-        if not os.path.exists(self.extra_addons):
-            raise UpgraderError(f"Extra addons path not found: {self.extra_addons}")
-
-        if os.path.isdir(self.extra_addons):
-            return
-
-        if os.path.isfile(self.extra_addons):
-            self._ensure_supported_addons_extension(self.extra_addons)
-            return
-
-        raise UpgraderError(
-            "Invalid extra addons source. Provide a local directory, a local `.zip` file, "
-            "or an HTTPS URL to a `.zip` file."
-        )
 
     def prepare_environment(self):
         logger.info("Preparing environment directories...")
