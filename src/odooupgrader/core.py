@@ -22,6 +22,7 @@ from .services.database import DatabaseService
 from .services.download import DownloadService
 from .services.docker_runtime import DockerRuntimeService
 from .services.filesystem import FileSystemService
+from .services.manifest import ManifestService
 from .services.state import StateService
 from .services.upgrade_step import UpgradeStepService
 from .services.validation import ValidationService
@@ -65,7 +66,9 @@ class OdooUpgrader:
         self.filestore_dir = os.path.join(self.output_dir, "filestore")
         self.custom_addons_dir = os.path.join(self.output_dir, "custom_addons")
         self.state_file = state_file or os.path.join(self.output_dir, "run-state.json")
+        self.manifest_file = os.path.join(self.output_dir, "run-manifest.json")
         self.state_service = StateService(state_file=self.state_file, logger=logger)
+        self.manifest_service = ManifestService(manifest_file=self.manifest_file, logger=logger)
         self.state: Optional[Dict[str, Any]] = None
         self.current_step_name: Optional[str] = None
 
@@ -132,6 +135,16 @@ class OdooUpgrader:
             "extra_addons_sha256": self.extra_addons_sha256,
         }
 
+    def _build_manifest_metadata(self) -> Dict[str, Any]:
+        metadata = self._build_resume_metadata()
+        metadata.update(
+            {
+                "resume_enabled": self.resume,
+                "state_file": self.state_file if self.resume else None,
+            }
+        )
+        return metadata
+
     def _initialize_state(self) -> bool:
         if not self.resume:
             return False
@@ -181,10 +194,13 @@ class OdooUpgrader:
             and self.state_service.is_step_completed(self.state, name)
         ):
             logger.info("Skipping completed step from state: %s", name)
+            self.manifest_service.step_started(name, details={"resumed": True})
+            self.manifest_service.step_finished(name, "skipped", details={"resumed": True})
             return None, True
 
         if self.state:
             self.state_service.mark_step_started(self.state, name)
+        self.manifest_service.step_started(name)
         self.current_step_name = name
 
         try:
@@ -192,10 +208,12 @@ class OdooUpgrader:
         except Exception as exc:
             if self.state:
                 self.state_service.mark_step_failed(self.state, name, str(exc))
+            self.manifest_service.step_finished(name, "failed", error=str(exc))
             raise
 
         if self.state:
             self.state_service.mark_step_completed(self.state, name)
+        self.manifest_service.step_finished(name, "success")
         self.current_step_name = None
         return result, False
 
@@ -468,6 +486,8 @@ class OdooUpgrader:
     def run(self) -> int:
         exit_code = 1
         preserve_runtime_for_resume = False
+        manifest_status = "failed"
+        manifest_error: Optional[str] = None
 
         try:
             logger.info("Starting OdooUpgrader...")
@@ -476,6 +496,11 @@ class OdooUpgrader:
                 raise UpgraderError(f"Invalid version. Supported versions: {', '.join(self.VALID_VERSIONS)}")
 
             resumed = self._initialize_state()
+            self.manifest_service.start_run(
+                run_id=self.run_context.run_id,
+                metadata=self._build_manifest_metadata(),
+            )
+            self.manifest_service.set_versions(source=None, target=self.target_version, current=None)
 
             self._run_step("validate_docker_environment", self.validate_docker_environment)
             self._run_step("validate_source_accessibility", self.validate_source_accessibility)
@@ -534,6 +559,11 @@ class OdooUpgrader:
 
             console.print(f"[bold blue]Current Database Version: {current_ver_str}[/bold blue]")
             logger.info("Current database version: %s", current_ver_str)
+            self.manifest_service.set_versions(
+                source=current_ver_str,
+                target=self.target_version,
+                current=current_ver_str,
+            )
 
             current_ver = self.get_version_info(current_ver_str)
             target_ver = self.get_version_info(self.target_version)
@@ -598,11 +628,22 @@ class OdooUpgrader:
                 if self.state:
                     self.state_service.set_current_version(self.state, current_ver_str)
                 console.print(f"[blue]Database is now at version: {current_ver_str}[/blue]")
+                self.manifest_service.set_versions(
+                    source=None,
+                    target=self.target_version,
+                    current=current_ver_str,
+                )
 
             self._run_step("finalize_package", self.finalize_package)
             self._run_step("cleanup_artifacts", self.cleanup_artifacts)
             if self.state:
                 self.state_service.mark_status(self.state, "success")
+            upgraded_zip = os.path.join(self.output_dir, "upgraded.zip")
+            if os.path.exists(upgraded_zip):
+                self.manifest_service.add_artifact("upgraded_zip", upgraded_zip)
+            self.manifest_service.add_artifact("odoo_log", os.path.join(self.output_dir, "odoo.log"))
+            manifest_status = "success"
+            manifest_error = None
             exit_code = 0
             return exit_code
 
@@ -611,6 +652,8 @@ class OdooUpgrader:
             logger.info("Operation cancelled by user")
             if self.state:
                 self.state_service.mark_status(self.state, "aborted", "Operation cancelled by user.")
+            manifest_status = "aborted"
+            manifest_error = "Operation cancelled by user."
             exit_code = 1
             return exit_code
         except UpgraderError as exc:
@@ -621,6 +664,8 @@ class OdooUpgrader:
                 self.state_service.mark_step_failed(self.state, failed_step, str(exc))
                 self.state_service.mark_status(self.state, "failed", str(exc))
             preserve_runtime_for_resume = self.resume
+            manifest_status = "failed"
+            manifest_error = str(exc)
             exit_code = 1
             return exit_code
         except Exception as exc:
@@ -631,9 +676,12 @@ class OdooUpgrader:
                 self.state_service.mark_step_failed(self.state, failed_step, str(exc))
                 self.state_service.mark_status(self.state, "failed", str(exc))
             preserve_runtime_for_resume = self.resume
+            manifest_status = "failed"
+            manifest_error = str(exc)
             exit_code = 1
             return exit_code
         finally:
+            self.manifest_service.finalize(manifest_status, error=manifest_error)
             if preserve_runtime_for_resume:
                 logger.warning(
                     "Preserving runtime artifacts and containers for resume mode. "
