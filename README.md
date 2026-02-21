@@ -115,6 +115,21 @@ odooupgrader \
   --module-audit-file ./output/module-audit.json
 ```
 
+### PostgreSQL dump compatibility
+
+If your SQL or binary dump was produced by a newer PostgreSQL toolchain, run with a compatible
+database image:
+
+```bash
+odooupgrader \
+  --source ./database.dump \
+  --version 18.0 \
+  --postgres-version 17
+```
+
+For SQL dumps (`dump.sql`), OdooUpgrader also retries automatically by stripping unsupported
+`SET` parameters when possible.
+
 ### Configuration file usage
 
 ```bash
@@ -192,6 +207,12 @@ output/
 ## Supported versions
 
 Odoo 10.0 through 18.0, aligned with OpenUpgrade availability.
+
+## Operational notes
+
+- If module audit reports OCA modules missing in the target branch, plan replacement/porting before migration.
+- For dumps created with newer PostgreSQL client versions, use `--postgres-version` accordingly.
+- SQL restore retries include compatibility stripping for unsupported PostgreSQL `SET` directives.
 
 ## Contributing
 

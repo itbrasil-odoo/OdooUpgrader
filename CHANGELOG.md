@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-02-21
+
+- Added recursive addon discovery for nested addon layouts (including OCA-style repository trees).
+- Added module preflight audit (`--analyze-modules`, `--analyze-modules-only`) with OCA target-branch checks.
+- Added strict audit mode and JSON report output controls (`--strict-module-audit`, `--module-audit-file`).
+- Improved SQL restore resilience by retrying with compatibility-stripped unsupported PostgreSQL `SET` directives.
+- Added actionable binary dump restore guidance for PostgreSQL version mismatch (`--postgres-version`).
+
 ## [0.6.0] - 2026-02-21
 
 - Added configuration-file support (`--config`) with precedence rules.
