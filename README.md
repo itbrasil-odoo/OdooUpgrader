@@ -213,6 +213,7 @@ Odoo 10.0 through 18.0, aligned with OpenUpgrade availability.
 - If module audit reports OCA modules missing in the target branch, plan replacement/porting before migration.
 - For dumps created with newer PostgreSQL client versions, use `--postgres-version` accordingly.
 - SQL restore retries include compatibility stripping for unsupported PostgreSQL `SET` directives.
+- Upgrade image build supports pip installs under externally-managed Python environments (PEP 668).
 
 ## Contributing
 

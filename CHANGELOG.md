@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Added strict audit mode and JSON report output controls (`--strict-module-audit`, `--module-audit-file`).
 - Improved SQL restore resilience by retrying with compatibility-stripped unsupported PostgreSQL `SET` directives.
 - Added actionable binary dump restore guidance for PostgreSQL version mismatch (`--postgres-version`).
+- Added PEP 668-compatible dependency installation during OpenUpgrade image build.
 
 ## [0.6.0] - 2026-02-21
 
