@@ -148,8 +148,7 @@ class StateService:
         if mismatches:
             mismatch_list = ", ".join(mismatches)
             raise UpgraderError(
-                "Cannot resume run with different inputs. "
-                f"Mismatched fields: {mismatch_list}."
+                "Cannot resume run with different inputs. " f"Mismatched fields: {mismatch_list}."
             )
 
     def _update_step_status(

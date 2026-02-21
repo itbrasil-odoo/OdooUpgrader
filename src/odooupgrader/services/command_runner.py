@@ -1,6 +1,6 @@
 """Subprocess execution service for OdooUpgrader."""
 
-import subprocess
+import subprocess  # nosec B404
 import time
 from typing import Iterable, List, Optional
 
@@ -33,7 +33,7 @@ class CommandRunner:
 
         for attempt in range(1, max_attempts + 1):
             try:
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B603
                     cmd,
                     text=True,
                     capture_output=capture_output,

@@ -53,7 +53,9 @@ class DownloadService:
         self.logger.info("Downloading %s to %s", url, dest_path)
         self.validation_service.enforce_https_policy(url, description, self.logger, self.console)
 
-        effective_timeout = timeout_seconds if timeout_seconds is not None else self.download_timeout
+        effective_timeout = (
+            timeout_seconds if timeout_seconds is not None else self.download_timeout
+        )
         effective_retry_count = retry_count if retry_count is not None else self.retry_count
         effective_backoff = (
             retry_backoff_seconds
@@ -120,7 +122,9 @@ class DownloadService:
                     continue
                 raise UpgraderError(f"Download failed for {description}: {exc}") from exc
 
-    def download_or_copy_source(self, source: str, source_dir: str, source_sha256: Optional[str]) -> str:
+    def download_or_copy_source(
+        self, source: str, source_dir: str, source_sha256: Optional[str]
+    ) -> str:
         if self.validation_service.is_url(source):
             url_path = urlparse(source).path
             ext = Path(url_path).suffix.lower()

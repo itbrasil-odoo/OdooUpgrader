@@ -75,7 +75,9 @@ class ValidationService:
 
         raise UpgraderError(f"{label} is not accessible: {last_error}")
 
-    def validate_source_accessibility(self, source: str, extra_addons: Optional[str], logger, console):
+    def validate_source_accessibility(
+        self, source: str, extra_addons: Optional[str], logger, console
+    ):
         self.ensure_supported_source_extension(source)
 
         if self.is_url(source):

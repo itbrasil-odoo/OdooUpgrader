@@ -220,7 +220,9 @@ networks:
                     continue
 
                 if process.returncode != 0:
-                    self.logger.error("Upgrade process returned non-zero exit code: %s", process.returncode)
+                    self.logger.error(
+                        "Upgrade process returned non-zero exit code: %s", process.returncode
+                    )
                     if last_lines:
                         self.logger.error("Recent upgrade logs:\n%s", "\n".join(last_lines))
                         self.console.print("[red]Recent upgrade logs:[/red]")
@@ -236,7 +238,12 @@ networks:
                     continue
 
             inspect_result = run_cmd(
-                ["docker", "inspect", run_context.upgrade_container_name, "--format={{.State.ExitCode}}"],
+                [
+                    "docker",
+                    "inspect",
+                    run_context.upgrade_container_name,
+                    "--format={{.State.ExitCode}}",
+                ],
                 check=False,
                 capture_output=True,
             )
@@ -283,7 +290,9 @@ networks:
     ) -> str:
         version_cache_path = os.path.join(cache_root, target_version)
         if self._is_cache_ready(version_cache_path):
-            self.logger.debug("Using cached OpenUpgrade source for %s at %s", target_version, version_cache_path)
+            self.logger.debug(
+                "Using cached OpenUpgrade source for %s at %s", target_version, version_cache_path
+            )
             return version_cache_path
 
         os.makedirs(cache_root, exist_ok=True)
@@ -292,7 +301,9 @@ networks:
 
             shutil.rmtree(version_cache_path, ignore_errors=True)
 
-        self.logger.info("Caching OpenUpgrade source for %s at %s", target_version, version_cache_path)
+        self.logger.info(
+            "Caching OpenUpgrade source for %s at %s", target_version, version_cache_path
+        )
         clone_cmd = [
             "git",
             "clone",

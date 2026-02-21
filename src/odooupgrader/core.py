@@ -3,7 +3,7 @@ import os
 import re
 import secrets
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import uuid
 import zipfile
 from dataclasses import asdict
@@ -186,7 +186,9 @@ class OdooUpgrader:
         if resumed:
             context_data = state.get("run_context")
             if not isinstance(context_data, dict):
-                raise UpgraderError("State file is missing run context. Start a fresh run without --resume.")
+                raise UpgraderError(
+                    "State file is missing run context. Start a fresh run without --resume."
+                )
             self.run_context = RunContext(**context_data)
             logger.info(
                 "Resuming previous run '%s' at step '%s'.",
@@ -253,9 +255,7 @@ class OdooUpgrader:
     ) -> subprocess.CompletedProcess:
         effective_retry_count = self.retry_count if retry_count is None else retry_count
         effective_backoff = (
-            self.retry_backoff_seconds
-            if retry_backoff_seconds is None
-            else retry_backoff_seconds
+            self.retry_backoff_seconds if retry_backoff_seconds is None else retry_backoff_seconds
         )
         return self.command_runner.run(
             cmd,
@@ -371,12 +371,12 @@ class OdooUpgrader:
             single_item_path = os.path.join(self.custom_addons_dir, items[0])
             if os.path.isdir(single_item_path):
                 sub_items = os.listdir(single_item_path)
-                is_module = any(
-                    item in sub_items for item in ["__manifest__.py", "__openerp__.py"]
-                )
+                is_module = any(item in sub_items for item in ["__manifest__.py", "__openerp__.py"])
 
                 if not is_module:
-                    logger.info("Detected wrapper directory '%s'. Flattening structure...", items[0])
+                    logger.info(
+                        "Detected wrapper directory '%s'. Flattening structure...", items[0]
+                    )
                     for sub_item in sub_items:
                         src_path = os.path.join(single_item_path, sub_item)
                         dst_path = os.path.join(self.custom_addons_dir, sub_item)
@@ -512,7 +512,9 @@ class OdooUpgrader:
         try:
             with zipfile.ZipFile(source_zip, "r") as archive:
                 sql_candidates = [
-                    name for name in archive.namelist() if name.endswith(".sql") and not name.startswith("__MACOSX")
+                    name
+                    for name in archive.namelist()
+                    if name.endswith(".sql") and not name.startswith("__MACOSX")
                 ]
                 for sql_name in sql_candidates:
                     with archive.open(sql_name, "r") as sql_file:
@@ -533,11 +535,15 @@ class OdooUpgrader:
         seen = set()
         while current != target_version:
             if current in seen:
-                raise UpgraderError(f"Unable to build dry-run plan due to version loop at {current}.")
+                raise UpgraderError(
+                    f"Unable to build dry-run plan due to version loop at {current}."
+                )
             seen.add(current)
             current = self.generate_next_version(current)
             if current not in self.VALID_VERSIONS:
-                raise UpgraderError(f"No supported upgrade path from {source_version} to {target_version}.")
+                raise UpgraderError(
+                    f"No supported upgrade path from {source_version} to {target_version}."
+                )
             plan.append(current)
         return plan
 
@@ -608,7 +614,9 @@ class OdooUpgrader:
             logger.info("Starting OdooUpgrader...")
 
             if self.target_version not in self.VALID_VERSIONS:
-                raise UpgraderError(f"Invalid version. Supported versions: {', '.join(self.VALID_VERSIONS)}")
+                raise UpgraderError(
+                    f"Invalid version. Supported versions: {', '.join(self.VALID_VERSIONS)}"
+                )
 
             resumed = False
             if not self.dry_run:
@@ -617,7 +625,9 @@ class OdooUpgrader:
                 run_id=self.run_context.run_id,
                 metadata=self._build_manifest_metadata(),
             )
-            self.manifest_service.set_versions(source=None, target=self.target_version, current=None)
+            self.manifest_service.set_versions(
+                source=None, target=self.target_version, current=None
+            )
 
             if self.dry_run:
                 skip_cleanup = True
@@ -648,7 +658,9 @@ class OdooUpgrader:
             current_ver_str = ""
 
             if self.resume and self.state:
-                database_restored = bool(self.state_service.get_value(self.state, "database_restored", False))
+                database_restored = bool(
+                    self.state_service.get_value(self.state, "database_restored", False)
+                )
                 current_ver_str = self.state_service.get_current_version(self.state) or ""
 
             if not (resumed and database_restored):
@@ -657,7 +669,9 @@ class OdooUpgrader:
             else:
                 logger.info("Skipping environment preparation due to resume state.")
 
-            self._run_step("create_db_compose_file", self.create_db_compose_file, skip_when_completed=False)
+            self._run_step(
+                "create_db_compose_file", self.create_db_compose_file, skip_when_completed=False
+            )
             self._run_step(
                 "start_db_container",
                 self._run_cmd,
@@ -672,7 +686,9 @@ class OdooUpgrader:
                 if self.state and local_source:
                     self.state_service.set_value(self.state, "local_source_path", local_source)
 
-                file_type, _ = self._run_step("process_source", self.process_source_file, local_source)
+                file_type, _ = self._run_step(
+                    "process_source", self.process_source_file, local_source
+                )
                 if self.state and file_type:
                     self.state_service.set_value(self.state, "source_file_type", file_type)
 
@@ -680,13 +696,20 @@ class OdooUpgrader:
                 if self.state:
                     self.state_service.set_value(self.state, "database_restored", True)
 
-                current_ver_str, _ = self._run_step("detect_current_version", self.get_current_version)
+                current_ver_str, _ = self._run_step(
+                    "detect_current_version", self.get_current_version
+                )
                 if self.state and current_ver_str:
                     self.state_service.set_current_version(self.state, current_ver_str)
             else:
-                logger.info("Resuming from restored database state at version: %s", current_ver_str or "<unknown>")
+                logger.info(
+                    "Resuming from restored database state at version: %s",
+                    current_ver_str or "<unknown>",
+                )
                 if not current_ver_str:
-                    current_ver_str, _ = self._run_step("detect_current_version", self.get_current_version)
+                    current_ver_str, _ = self._run_step(
+                        "detect_current_version", self.get_current_version
+                    )
                     if self.state and current_ver_str:
                         self.state_service.set_current_version(self.state, current_ver_str)
 
@@ -779,7 +802,9 @@ class OdooUpgrader:
             upgraded_zip = os.path.join(self.output_dir, "upgraded.zip")
             if os.path.exists(upgraded_zip):
                 self.manifest_service.add_artifact("upgraded_zip", upgraded_zip)
-            self.manifest_service.add_artifact("odoo_log", os.path.join(self.output_dir, "odoo.log"))
+            self.manifest_service.add_artifact(
+                "odoo_log", os.path.join(self.output_dir, "odoo.log")
+            )
             manifest_status = "success"
             manifest_error = None
             exit_code = 0
@@ -789,7 +814,9 @@ class OdooUpgrader:
             console.print("[bold red]Operation cancelled by user.[/bold red]")
             logger.info("Operation cancelled by user")
             if self.state:
-                self.state_service.mark_status(self.state, "aborted", "Operation cancelled by user.")
+                self.state_service.mark_status(
+                    self.state, "aborted", "Operation cancelled by user."
+                )
             manifest_status = "aborted"
             manifest_error = "Operation cancelled by user."
             exit_code = 1

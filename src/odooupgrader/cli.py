@@ -151,7 +151,9 @@ def main(
     version = _resolve_option(version, config_values, "version")
     extra_addons = _resolve_option(extra_addons, config_values, "extra_addons")
     verbose = bool(_resolve_option(verbose, config_values, "verbose", default=False))
-    postgres_version = str(_resolve_option(postgres_version, config_values, "postgres_version", default="13"))
+    postgres_version = str(
+        _resolve_option(postgres_version, config_values, "postgres_version", default="13")
+    )
     log_file = _resolve_option(log_file, config_values, "log_file")
     allow_insecure_http = bool(
         _resolve_option(allow_insecure_http, config_values, "allow_insecure_http", default=False)

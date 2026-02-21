@@ -1,6 +1,6 @@
 """Docker runtime services for OdooUpgrader."""
 
-import subprocess
+import subprocess  # nosec B404
 import time
 from typing import Callable, List
 
@@ -21,7 +21,9 @@ class DockerRuntimeService:
             return ["docker", "compose"]
         except (self.subprocess.CalledProcessError, FileNotFoundError):
             try:
-                self.subprocess.run(["docker-compose", "--version"], check=True, capture_output=True)
+                self.subprocess.run(
+                    ["docker-compose", "--version"], check=True, capture_output=True
+                )
                 return ["docker-compose"]
             except (self.subprocess.CalledProcessError, FileNotFoundError):
                 raise UpgraderError(

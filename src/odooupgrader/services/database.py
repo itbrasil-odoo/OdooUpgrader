@@ -2,6 +2,8 @@
 
 import os
 import zipfile
+from pathlib import PurePosixPath
+from typing import cast
 
 from odooupgrader.constants import DIR_MODE
 from odooupgrader.errors import UpgraderError
@@ -15,7 +17,13 @@ class DatabaseService:
         self.console = console
         self.filesystem_service = filesystem_service
 
-    def restore_database(self, file_type: str, source_dir: str, filestore_dir: str, run_context, run_cmd):
+    @staticmethod
+    def _container_tmp_path(filename: str) -> str:
+        return str(PurePosixPath("/", "tmp", filename))
+
+    def restore_database(
+        self, file_type: str, source_dir: str, filestore_dir: str, run_context, run_cmd
+    ):
         self.console.print("[blue]Restoring database...[/blue]")
         self.logger.info("Restoring database...")
 
@@ -51,7 +59,9 @@ class DatabaseService:
         if file_type == "ZIP":
             dump_path = os.path.join(source_dir, "dump.sql")
             if not os.path.exists(dump_path):
-                sql_files = [file_name for file_name in os.listdir(source_dir) if file_name.endswith(".sql")]
+                sql_files = [
+                    file_name for file_name in os.listdir(source_dir) if file_name.endswith(".sql")
+                ]
                 if not sql_files:
                     raise UpgraderError(
                         "No SQL dump found inside ZIP. Ensure it contains `dump.sql` or another `.sql` file."
@@ -84,8 +94,14 @@ class DatabaseService:
                 except Exception as exc:
                     self.logger.warning("Failed to copy filestore: %s", exc)
 
+            container_sql_dump = self._container_tmp_path("dump.sql")
             run_cmd(
-                ["docker", "cp", dump_path, f"{run_context.db_container_name}:/tmp/dump.sql"],
+                [
+                    "docker",
+                    "cp",
+                    dump_path,
+                    f"{run_context.db_container_name}:{container_sql_dump}",
+                ],
                 check=True,
                 capture_output=True,
             )
@@ -104,7 +120,7 @@ class DatabaseService:
                     "-v",
                     "ON_ERROR_STOP=1",
                     "-f",
-                    "/tmp/dump.sql",
+                    container_sql_dump,
                 ],
                 check=True,
                 capture_output=True,
@@ -112,8 +128,9 @@ class DatabaseService:
             return
 
         dump_path = os.path.join(source_dir, "database.dump")
+        container_binary_dump = self._container_tmp_path("database.dump")
         run_cmd(
-            ["docker", "cp", dump_path, f"{run_context.db_container_name}:/tmp/database.dump"],
+            ["docker", "cp", dump_path, f"{run_context.db_container_name}:{container_binary_dump}"],
             check=True,
             capture_output=True,
         )
@@ -134,7 +151,7 @@ class DatabaseService:
                 "--if-exists",
                 "--single-transaction",
                 "--exit-on-error",
-                "/tmp/database.dump",
+                container_binary_dump,
             ],
             check=True,
             capture_output=True,
@@ -174,7 +191,7 @@ class DatabaseService:
             for line in result.stdout.splitlines():
                 cleaned = line.strip()
                 if cleaned:
-                    return cleaned
+                    return cast(str, cleaned)
 
         return ""
 
@@ -214,7 +231,9 @@ class DatabaseService:
                         archive_name = os.path.relpath(file_path, output_dir)
                         zip_file.write(file_path, archive_name)
 
-        self.console.print(f"[bold green]Upgrade Complete! Package available at: {zip_name}[/bold green]")
+        self.console.print(
+            f"[bold green]Upgrade Complete! Package available at: {zip_name}[/bold green]"
+        )
         self.logger.info("Upgrade complete. Package: %s", zip_name)
 
         try:

@@ -26,7 +26,9 @@ def build_upgrader(tmp_path, source, **kwargs):
     return OdooUpgrader(source=str(source), target_version="15.0", **kwargs)
 
 
-def test_safe_extract_zip_blocks_path_traversal(tmp_path, patch_compose_detection, local_source_file):
+def test_safe_extract_zip_blocks_path_traversal(
+    tmp_path, patch_compose_detection, local_source_file
+):
     upgrader = build_upgrader(tmp_path, local_source_file)
 
     malicious_zip = tmp_path / "malicious.zip"
@@ -42,7 +44,9 @@ def test_safe_extract_zip_blocks_path_traversal(tmp_path, patch_compose_detectio
     assert not (tmp_path / "escape.txt").exists()
 
 
-def test_safe_extract_zip_allows_valid_archive(tmp_path, patch_compose_detection, local_source_file):
+def test_safe_extract_zip_allows_valid_archive(
+    tmp_path, patch_compose_detection, local_source_file
+):
     upgrader = build_upgrader(tmp_path, local_source_file)
 
     valid_zip = tmp_path / "valid.zip"
@@ -89,7 +93,9 @@ def test_http_source_can_be_allowed_with_explicit_flag(
         def close(self):
             return None
 
-    monkeypatch.setattr(core_module.requests, "request", lambda *args, **kwargs: FakeProbeResponse())
+    monkeypatch.setattr(
+        core_module.requests, "request", lambda *args, **kwargs: FakeProbeResponse()
+    )
 
     upgrader = OdooUpgrader(
         source="http://example.com/database.dump",
@@ -172,7 +178,9 @@ def test_download_file_accepts_matching_checksum(
     assert destination.read_bytes() == payload
 
 
-def test_invalid_extra_addons_file_is_rejected(tmp_path, patch_compose_detection, local_source_file):
+def test_invalid_extra_addons_file_is_rejected(
+    tmp_path, patch_compose_detection, local_source_file
+):
     invalid_addons = tmp_path / "addons.txt"
     invalid_addons.write_text("not a zip", encoding="utf-8")
 
@@ -268,7 +276,9 @@ def test_run_fails_when_upgrade_does_not_progress(
     assert upgrader.run() == 1
 
 
-def test_run_cmd_bubbles_stderr_in_error_message(tmp_path, patch_compose_detection, local_source_file):
+def test_run_cmd_bubbles_stderr_in_error_message(
+    tmp_path, patch_compose_detection, local_source_file
+):
     upgrader = build_upgrader(tmp_path, local_source_file)
 
     with pytest.raises(UpgraderError) as error:

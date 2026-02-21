@@ -6,10 +6,7 @@ import odooupgrader.cli as cli_module
 def test_cli_uses_config_and_allows_cli_override(tmp_path, monkeypatch):
     config_file = tmp_path / ".odooupgrader.yml"
     config_file.write_text(
-        "source: config.dump\n"
-        "version: '15.0'\n"
-        "retry_count: 3\n"
-        "download_timeout: 45\n",
+        "source: config.dump\n" "version: '15.0'\n" "retry_count: 3\n" "download_timeout: 45\n",
         encoding="utf-8",
     )
 
@@ -51,8 +48,7 @@ def test_cli_uses_config_and_allows_cli_override(tmp_path, monkeypatch):
 def test_cli_uses_default_config_file_when_present(tmp_path, monkeypatch):
     default_config = tmp_path / ".odooupgrader.yml"
     default_config.write_text(
-        "source: default.dump\n"
-        "version: '16.0'\n",
+        "source: default.dump\n" "version: '16.0'\n",
         encoding="utf-8",
     )
 

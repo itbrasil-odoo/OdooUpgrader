@@ -52,7 +52,9 @@ def test_build_upgrade_dockerfile_includes_custom_addons_section():
 def test_build_upgrade_compose_uses_dynamic_runtime_names():
     service = UpgradeStepService(logger=DummyLogger(), console=DummyConsole())
 
-    compose = service.build_upgrade_compose(_build_context(), extra_addons_path_arg=",/mnt/custom-addons")
+    compose = service.build_upgrade_compose(
+        _build_context(), extra_addons_path_arg=",/mnt/custom-addons"
+    )
 
     assert "container_name: upgrade_name" in compose
     assert "- HOST=db_name" in compose
@@ -88,7 +90,9 @@ def test_run_upgrade_step_respects_timeout(monkeypatch, tmp_path):
         Popen = FakePopen
 
     monotonic_values = iter([0.0, 999.0, 999.0])
-    monkeypatch.setattr("odooupgrader.services.upgrade_step.time.monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(
+        "odooupgrader.services.upgrade_step.time.monotonic", lambda: next(monotonic_values)
+    )
 
     result = service.run_upgrade_step(
         target_version="15.0",
