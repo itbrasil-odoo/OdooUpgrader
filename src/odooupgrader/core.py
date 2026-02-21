@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 import secrets
@@ -11,16 +10,13 @@ import zipfile
 from collections import deque
 from pathlib import Path
 from typing import Deque, List, Optional
-from urllib.parse import urlparse
 
 import requests
 from packaging import version
 from rich.console import Console
 from rich.progress import (
-    BarColumn,
     Progress,
     SpinnerColumn,
-    TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
 )
@@ -29,6 +25,8 @@ from .constants import DIR_MODE, FILE_MODE, SCRIPT_MODE
 from .errors import UpgraderError
 from .models import RunContext
 from .services.archive import ArchiveService
+from .services.command_runner import CommandRunner
+from .services.download import DownloadService
 from .services.filesystem import FileSystemService
 from .services.validation import ValidationService
 
@@ -74,6 +72,13 @@ class OdooUpgrader:
             allow_insecure_http=self.allow_insecure_http,
             requests_module=requests,
         )
+        self.command_runner = CommandRunner(logger=logger)
+        self.download_service = DownloadService(
+            validation_service=self.validation_service,
+            logger=logger,
+            console=console,
+            requests_module=requests,
+        )
 
         self.compose_cmd = self._get_docker_compose_cmd()
         self.run_context = self._build_run_context()
@@ -110,39 +115,7 @@ class OdooUpgrader:
         check: bool = True,
         capture_output: bool = False,
     ) -> subprocess.CompletedProcess:
-        """Executes command with consistent logging and actionable failures."""
-        cmd_str = " ".join(cmd)
-        logger.debug("Executing: %s", cmd_str)
-
-        try:
-            result = subprocess.run(
-                cmd,
-                text=True,
-                capture_output=capture_output,
-            )
-        except FileNotFoundError as exc:
-            raise UpgraderError(
-                f"Required command not found: {cmd[0]}. "
-                "Please install it and try again."
-            ) from exc
-        except Exception as exc:
-            raise UpgraderError(f"Failed to execute command: {cmd_str}. {exc}") from exc
-
-        if capture_output and result.stdout:
-            logger.debug("Command output: %s", result.stdout.strip())
-
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip() if capture_output else ""
-            base_message = f"Command failed ({result.returncode}): {cmd_str}"
-            if stderr:
-                base_message = f"{base_message}\n{stderr}"
-
-            if check:
-                raise UpgraderError(base_message)
-
-            logger.warning(base_message)
-
-        return result
+        return self.command_runner.run(cmd, check=check, capture_output=capture_output)
 
     def _get_docker_compose_cmd(self) -> List[str]:
         """Finds an available Docker Compose command."""
@@ -243,67 +216,19 @@ class OdooUpgrader:
         description: str = "Downloading...",
         expected_sha256: Optional[str] = None,
     ):
-        logger.info("Downloading %s to %s", url, dest_path)
-        self._enforce_https_policy(url, description)
-
-        hasher = hashlib.sha256() if expected_sha256 else None
-
-        try:
-            with requests.get(url, stream=True, timeout=60) as response:
-                response.raise_for_status()
-                total_size = int(response.headers.get("Content-Length", 0))
-
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    TaskProgressColumn(),
-                    "•",
-                    TimeElapsedColumn(),
-                    console=console,
-                ) as progress:
-                    task = progress.add_task(f"[cyan]{description}", total=total_size or None)
-                    with open(dest_path, "wb") as file_obj:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if not chunk:
-                                continue
-                            file_obj.write(chunk)
-                            if hasher:
-                                hasher.update(chunk)
-                            progress.update(task, advance=len(chunk))
-
-            if hasher:
-                downloaded_sha = hasher.hexdigest()
-                if downloaded_sha != expected_sha256:
-                    try:
-                        os.remove(dest_path)
-                    except OSError:
-                        pass
-                    raise UpgraderError(
-                        f"Checksum mismatch for {description}. Expected {expected_sha256}, "
-                        f"but got {downloaded_sha}."
-                    )
-
-        except requests.RequestException as exc:
-            raise UpgraderError(f"Download failed for {description}: {exc}") from exc
+        self.download_service.download_file(
+            url=url,
+            dest_path=dest_path,
+            description=description,
+            expected_sha256=expected_sha256,
+        )
 
     def download_or_copy_source(self) -> str:
-        if self._is_url(self.source):
-            url_path = urlparse(self.source).path
-            ext = Path(url_path).suffix.lower()
-            filename = os.path.basename(url_path) or f"downloaded_db{ext or '.dump'}"
-            target_path = os.path.join(self.source_dir, filename)
-            self.download_file(
-                self.source,
-                target_path,
-                "Downloading source DB...",
-                expected_sha256=self.source_sha256,
-            )
-            return target_path
-
-        return self.source
+        return self.download_service.download_or_copy_source(
+            source=self.source,
+            source_dir=self.source_dir,
+            source_sha256=self.source_sha256,
+        )
 
     def process_extra_addons(self):
         """Downloads/copies/extracts addons and normalizes structure."""
