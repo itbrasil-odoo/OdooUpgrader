@@ -54,3 +54,48 @@ def test_validation_service_rejects_invalid_source_extension(tmp_path):
             logger=DummyLogger(),
             console=DummyConsole(),
         )
+
+
+def test_validation_service_accepts_valid_local_addons_directory(tmp_path):
+    source = tmp_path / "database.dump"
+    source.write_text("dummy", encoding="utf-8")
+
+    addons_root = tmp_path / "addons"
+    module = addons_root / "my_module"
+    module.mkdir(parents=True)
+    (module / "__manifest__.py").write_text(
+        "{'name': 'My Module', 'version': '14.0.1.0.0', 'depends': ['base']}",
+        encoding="utf-8",
+    )
+
+    service = ValidationService()
+
+    service.validate_source_accessibility(
+        source=str(source),
+        extra_addons=str(addons_root),
+        logger=DummyLogger(),
+        console=DummyConsole(),
+    )
+
+
+def test_validation_service_rejects_addons_manifest_with_invalid_depends(tmp_path):
+    source = tmp_path / "database.dump"
+    source.write_text("dummy", encoding="utf-8")
+
+    addons_root = tmp_path / "addons"
+    module = addons_root / "bad_module"
+    module.mkdir(parents=True)
+    (module / "__manifest__.py").write_text(
+        "{'name': 'Bad Module', 'version': '14.0.1.0.0', 'depends': 'base'}",
+        encoding="utf-8",
+    )
+
+    service = ValidationService()
+
+    with pytest.raises(UpgraderError, match="invalid 'depends'"):
+        service.validate_source_accessibility(
+            source=str(source),
+            extra_addons=str(addons_root),
+            logger=DummyLogger(),
+            console=DummyConsole(),
+        )

@@ -258,6 +258,8 @@ class OdooUpgrader:
                 if src_path != module_dir:
                     shutil.move(src_path, dst_path)
 
+        self.validation_service.validate_addons_structure(Path(self.custom_addons_dir))
+
         requirements_path = os.path.join(self.custom_addons_dir, "requirements.txt")
         if not os.path.exists(requirements_path):
             with open(requirements_path, "w", encoding="utf-8") as file_obj:
