@@ -125,43 +125,8 @@ class OdooUpgrader:
     def _get_docker_compose_cmd(self) -> List[str]:
         return self.docker_runtime_service.get_docker_compose_cmd()
 
-    def _is_url(self, location: str) -> bool:
-        return self.validation_service.is_url(location)
-
-    def _get_location_extension(self, location: str) -> str:
-        return self.validation_service.get_location_extension(location)
-
-    def _ensure_supported_source_extension(self, location: str):
-        self.validation_service.ensure_supported_source_extension(location)
-
-    def _ensure_supported_addons_extension(self, location: str):
-        self.validation_service.ensure_supported_addons_extension(location)
-
-    def _enforce_https_policy(self, location: str, label: str):
-        self.validation_service.enforce_https_policy(location, label, logger, console)
-
-    def _probe_url(self, location: str, label: str):
-        self.validation_service.probe_url(location, label, logger, console)
-
-    def _is_within_dir(self, base_dir: Path, candidate: Path) -> bool:
-        return self.archive_service.is_within_dir(base_dir, candidate)
-
     def _safe_extract_zip(self, zip_path: str, destination_dir: str):
         self.archive_service.safe_extract_zip(zip_path, destination_dir)
-
-    def _set_permissions(self, path: str, mode: int):
-        self.filesystem_service.set_permissions(path, mode)
-
-    def _set_tree_permissions(
-        self,
-        root: str,
-        dir_mode: int = DIR_MODE,
-        file_mode: int = FILE_MODE,
-    ):
-        self.filesystem_service.set_tree_permissions(root, dir_mode, file_mode, SCRIPT_MODE)
-
-    def _cleanup_dir(self, path: str):
-        self.filesystem_service.cleanup_dir(path)
 
     def validate_docker_environment(self):
         self.docker_runtime_service.validate_environment(self.compose_cmd, self._run_cmd)
@@ -180,24 +145,24 @@ class OdooUpgrader:
             console=console,
         )
 
-        if self._is_url(self.source):
+        if self.validation_service.is_url(self.source):
             console.print("[green]Source URL is accessible.[/green]")
         else:
             console.print("[green]Source file exists.[/green]")
 
     def prepare_environment(self):
         logger.info("Preparing environment directories...")
-        self._cleanup_dir(self.source_dir)
-        self._cleanup_dir(self.output_dir)
+        self.filesystem_service.cleanup_dir(self.source_dir)
+        self.filesystem_service.cleanup_dir(self.output_dir)
 
         os.makedirs(self.source_dir, exist_ok=True)
         os.makedirs(self.filestore_dir, exist_ok=True)
         os.makedirs(self.custom_addons_dir, exist_ok=True)
 
-        self._set_permissions(self.source_dir, DIR_MODE)
-        self._set_permissions(self.output_dir, DIR_MODE)
-        self._set_permissions(self.filestore_dir, DIR_MODE)
-        self._set_permissions(self.custom_addons_dir, DIR_MODE)
+        self.filesystem_service.set_permissions(self.source_dir, DIR_MODE)
+        self.filesystem_service.set_permissions(self.output_dir, DIR_MODE)
+        self.filesystem_service.set_permissions(self.filestore_dir, DIR_MODE)
+        self.filesystem_service.set_permissions(self.custom_addons_dir, DIR_MODE)
 
     def download_file(
         self,
@@ -228,7 +193,7 @@ class OdooUpgrader:
         console.print("[blue]Processing custom addons...[/blue]")
         logger.info("Processing custom addons...")
 
-        if self._is_url(self.extra_addons):
+        if self.validation_service.is_url(self.extra_addons):
             zip_path = os.path.join(self.source_dir, "addons.zip")
             self.download_file(
                 self.extra_addons,
@@ -300,7 +265,12 @@ class OdooUpgrader:
         elif os.path.getsize(requirements_path) == 0:
             logger.warning("Empty requirements.txt found in custom addons.")
 
-        self._set_tree_permissions(self.custom_addons_dir)
+        self.filesystem_service.set_tree_permissions(
+            self.custom_addons_dir,
+            dir_mode=DIR_MODE,
+            file_mode=FILE_MODE,
+            script_mode=SCRIPT_MODE,
+        )
         console.print("[green]Custom addons prepared.[/green]")
 
     def process_source_file(self, filepath: str) -> str:
@@ -389,9 +359,9 @@ class OdooUpgrader:
 
     def cleanup_artifacts(self):
         logger.info("Cleaning up artifacts...")
-        self._cleanup_dir(self.source_dir)
-        self._cleanup_dir(self.filestore_dir)
-        self._cleanup_dir(self.custom_addons_dir)
+        self.filesystem_service.cleanup_dir(self.source_dir)
+        self.filesystem_service.cleanup_dir(self.filestore_dir)
+        self.filesystem_service.cleanup_dir(self.custom_addons_dir)
 
     def cleanup(self):
         self.docker_runtime_service.cleanup_docker_environment(self.compose_cmd, self._run_cmd)
