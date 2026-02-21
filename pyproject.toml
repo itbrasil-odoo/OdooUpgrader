@@ -28,6 +28,7 @@ dependencies = [
     "rich>=13.7.0",
     "requests>=2.31.0",
     "packaging>=23.0",
+    "PyYAML>=6.0.2",
 ]
 
 [project.optional-dependencies]
