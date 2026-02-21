@@ -26,6 +26,7 @@ from .services.docker_runtime import DockerRuntimeService
 from .services.download import DownloadService
 from .services.filesystem import FileSystemService
 from .services.manifest import ManifestService
+from .services.module_audit import ModuleAuditService
 from .services.state import StateService
 from .services.upgrade_step import UpgradeStepService
 from .services.validation import ValidationService
@@ -54,6 +55,10 @@ class OdooUpgrader:
         retry_backoff_seconds: float = 2.0,
         step_timeout_minutes: int = 120,
         dry_run: bool = False,
+        analyze_modules: bool = False,
+        analyze_modules_only: bool = False,
+        strict_module_audit: bool = False,
+        module_audit_file: Optional[str] = None,
     ):
         self.source = source
         self.target_version = target_version
@@ -72,6 +77,9 @@ class OdooUpgrader:
         self.retry_backoff_seconds = retry_backoff_seconds
         self.step_timeout_minutes = step_timeout_minutes
         self.dry_run = dry_run
+        self.analyze_modules = analyze_modules
+        self.analyze_modules_only = analyze_modules_only
+        self.strict_module_audit = strict_module_audit
         if self.download_timeout <= 0:
             raise UpgraderError("--download-timeout must be greater than zero.")
         if self.retry_count < 0:
@@ -80,6 +88,10 @@ class OdooUpgrader:
             raise UpgraderError("--retry-backoff-seconds cannot be negative.")
         if self.step_timeout_minutes <= 0:
             raise UpgraderError("--step-timeout-minutes must be greater than zero.")
+        if self.analyze_modules_only:
+            self.analyze_modules = True
+        if self.strict_module_audit and not self.analyze_modules:
+            raise UpgraderError("--strict-module-audit requires --analyze-modules.")
 
         self.cwd = os.getcwd()
         self.source_dir = os.path.join(self.cwd, "source")
@@ -88,6 +100,9 @@ class OdooUpgrader:
         self.custom_addons_dir = os.path.join(self.output_dir, "custom_addons")
         self.state_file = state_file or os.path.join(self.output_dir, "run-state.json")
         self.manifest_file = os.path.join(self.output_dir, "run-manifest.json")
+        self.module_audit_file = module_audit_file or os.path.join(
+            self.output_dir, "module-audit.json"
+        )
         self.state_service = StateService(state_file=self.state_file, logger=logger)
         self.manifest_service = ManifestService(manifest_file=self.manifest_file, logger=logger)
         self.state: Optional[Dict[str, Any]] = None
@@ -120,6 +135,12 @@ class OdooUpgrader:
             filesystem_service=self.filesystem_service,
         )
         self.upgrade_step_service = UpgradeStepService(logger=logger, console=console)
+        self.module_audit_service = ModuleAuditService(
+            logger=logger,
+            console=console,
+            retry_count=self.retry_count,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
 
         self.compose_cmd = self._get_docker_compose_cmd()
         self.run_context = self._build_run_context()
@@ -168,6 +189,9 @@ class OdooUpgrader:
                 "resume_enabled": self.resume,
                 "state_file": self.state_file if self.resume else None,
                 "dry_run": self.dry_run,
+                "analyze_modules": self.analyze_modules,
+                "analyze_modules_only": self.analyze_modules_only,
+                "strict_module_audit": self.strict_module_audit,
             }
         )
         return metadata
@@ -596,6 +620,54 @@ class OdooUpgrader:
             subprocess_module=subprocess,
         )
 
+    def audit_modules(self):
+        addons_locations: List[str] = []
+        if self.extra_addons:
+            addons_locations.append(self.custom_addons_dir)
+
+        report = self.module_audit_service.run_audit(
+            run_context=self.run_context,
+            run_cmd=self._run_cmd,
+            target_version=self.target_version,
+            addons_locations=addons_locations,
+            recursive=True,
+            output_file=self.module_audit_file,
+        )
+
+        self.manifest_service.add_artifact("module_audit", self.module_audit_file)
+        oca_report = report.get("oca", {})
+        missing = oca_report.get("missing_in_target", [])
+        errors = oca_report.get("check_errors", [])
+
+        if missing:
+            missing_labels = [f"{item['repository']}/{item['module']}" for item in missing]
+            logger.warning(
+                "OCA modules not found for target %s: %s",
+                self.target_version,
+                ", ".join(missing_labels),
+            )
+            console.print(
+                "[yellow]Warning:[/yellow] Some OCA modules were not found for target "
+                f"{self.target_version}. See {self.module_audit_file}."
+            )
+
+        if errors:
+            logger.warning(
+                "OCA module checks returned errors for target %s. See %s",
+                self.target_version,
+                self.module_audit_file,
+            )
+            console.print(
+                "[yellow]Warning:[/yellow] Some OCA checks failed (API/network/rate-limit). "
+                f"See {self.module_audit_file}."
+            )
+
+        if self.strict_module_audit and (missing or errors):
+            raise UpgraderError(
+                "Module audit failed in strict mode. "
+                f"Review {self.module_audit_file} and resolve issues before retrying."
+            )
+
     def cleanup_artifacts(self):
         logger.info("Cleaning up artifacts...")
         self.filesystem_service.cleanup_dir(self.source_dir)
@@ -735,6 +807,18 @@ class OdooUpgrader:
                 target=self.target_version,
                 current=current_ver_str,
             )
+
+            if self.analyze_modules:
+                self._run_step("audit_modules", self.audit_modules)
+                if self.analyze_modules_only:
+                    console.print(
+                        "[green]Module audit finished. Skipping upgrade due to "
+                        "--analyze-modules-only.[/green]"
+                    )
+                    manifest_status = "success"
+                    manifest_error = None
+                    exit_code = 0
+                    return exit_code
 
             current_ver = self.get_version_info(current_ver_str)
             target_ver = self.get_version_info(self.target_version)

@@ -113,6 +113,30 @@ logging.basicConfig(
     default=None,
     help="Validate inputs and print upgrade plan without running Docker or changing state.",
 )
+@click.option(
+    "--analyze-modules",
+    is_flag=True,
+    default=None,
+    help="Audit installed modules and check OCA modules against the target version.",
+)
+@click.option(
+    "--analyze-modules-only",
+    is_flag=True,
+    default=None,
+    help="Run module audit and stop before upgrade steps.",
+)
+@click.option(
+    "--strict-module-audit",
+    is_flag=True,
+    default=None,
+    help="Fail execution when module audit detects missing OCA modules or check errors.",
+)
+@click.option(
+    "--module-audit-file",
+    required=False,
+    type=click.Path(),
+    help="Path for module audit JSON report (default: output/module-audit.json).",
+)
 def main(
     source,
     version,
@@ -131,6 +155,10 @@ def main(
     retry_backoff_seconds,
     step_timeout_minutes,
     dry_run,
+    analyze_modules,
+    analyze_modules_only,
+    strict_module_audit,
+    module_audit_file,
 ):
     """Automate incremental Odoo database upgrades using OpenUpgrade."""
     logger = logging.getLogger("odooupgrader")
@@ -178,6 +206,21 @@ def main(
         _resolve_option(step_timeout_minutes, config_values, "step_timeout_minutes", default=120)
     )
     dry_run = bool(_resolve_option(dry_run, config_values, "dry_run", default=False))
+    analyze_modules = bool(
+        _resolve_option(analyze_modules, config_values, "analyze_modules", default=False)
+    )
+    analyze_modules_only = bool(
+        _resolve_option(
+            analyze_modules_only,
+            config_values,
+            "analyze_modules_only",
+            default=False,
+        )
+    )
+    strict_module_audit = bool(
+        _resolve_option(strict_module_audit, config_values, "strict_module_audit", default=False)
+    )
+    module_audit_file = _resolve_option(module_audit_file, config_values, "module_audit_file")
 
     if not source:
         raise click.ClickException("Missing required option '--source' (or provide it in config).")
@@ -213,6 +256,10 @@ def main(
             retry_backoff_seconds=retry_backoff_seconds,
             step_timeout_minutes=step_timeout_minutes,
             dry_run=dry_run,
+            analyze_modules=analyze_modules,
+            analyze_modules_only=analyze_modules_only,
+            strict_module_audit=strict_module_audit,
+            module_audit_file=module_audit_file,
         )
     except UpgraderError as exc:
         raise click.ClickException(str(exc)) from exc

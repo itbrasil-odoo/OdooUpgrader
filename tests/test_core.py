@@ -328,3 +328,45 @@ def test_dry_run_builds_plan_without_docker_runtime(tmp_path, monkeypatch, patch
     assert upgrader.run() == 0
     assert docker_called["value"] is False
     assert cleanup_called["value"] is False
+
+
+def test_analyze_modules_only_stops_before_upgrade(
+    tmp_path,
+    monkeypatch,
+    patch_compose_detection,
+    local_source_file,
+):
+    upgrader = OdooUpgrader(
+        source=str(local_source_file),
+        target_version="18.0",
+        analyze_modules_only=True,
+    )
+
+    monkeypatch.setattr(upgrader, "validate_docker_environment", lambda: None)
+    monkeypatch.setattr(upgrader, "validate_source_accessibility", lambda: None)
+    monkeypatch.setattr(upgrader, "prepare_environment", lambda: None)
+    monkeypatch.setattr(upgrader, "process_extra_addons", lambda: None)
+    monkeypatch.setattr(upgrader, "create_db_compose_file", lambda: None)
+    monkeypatch.setattr(
+        upgrader,
+        "_run_cmd",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(upgrader, "wait_for_db", lambda: None)
+    monkeypatch.setattr(upgrader, "download_or_copy_source", lambda: str(local_source_file))
+    monkeypatch.setattr(upgrader, "process_source_file", lambda *_: "DUMP")
+    monkeypatch.setattr(upgrader, "restore_database", lambda *_: None)
+    monkeypatch.setattr(upgrader, "get_current_version", lambda: "17.0")
+    monkeypatch.setattr(upgrader, "audit_modules", lambda: None)
+    monkeypatch.setattr(upgrader, "cleanup", lambda: None)
+
+    upgrade_called = {"value": False}
+
+    def mark_upgrade_called(*_args, **_kwargs):
+        upgrade_called["value"] = True
+        return True
+
+    monkeypatch.setattr(upgrader, "run_upgrade_step", mark_upgrade_called)
+
+    assert upgrader.run() == 0
+    assert upgrade_called["value"] is False
