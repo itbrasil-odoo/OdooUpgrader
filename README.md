@@ -117,6 +117,18 @@ odooupgrader \
 6. Upgrade step-by-step with OpenUpgrade containers
 7. Package final `dump.sql` + `filestore` into `output/upgraded.zip`
 
+## Architecture
+
+Core orchestration now follows single-responsibility boundaries:
+
+- `src/odooupgrader/core.py`: workflow orchestration and service wiring
+- `src/odooupgrader/errors.py`: domain exceptions
+- `src/odooupgrader/models.py`: runtime models
+- `src/odooupgrader/constants.py`: shared constants/defaults
+- `src/odooupgrader/services/`: side-effect services (`validation`, `archive`, `download`, `filesystem`, `command_runner`, `docker_runtime`, `database`, `upgrade_step`)
+
+See `docs/architecture.md` for the full responsibility map and flow.
+
 ## Output structure
 
 ```text
