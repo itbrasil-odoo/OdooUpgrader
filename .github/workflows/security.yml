@@ -1,0 +1,66 @@
+name: Security
+
+on:
+  push:
+    branches: ["main", "dev"]
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/**"
+  pull_request:
+    branches: ["main", "dev"]
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/**"
+  schedule:
+    - cron: "0 5 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  python-security:
+    name: Python Security Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: pip-audit
+        run: pip-audit
+
+      - name: Bandit
+        run: bandit -r src -q
+
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
