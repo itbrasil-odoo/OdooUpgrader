@@ -4,30 +4,24 @@ import secrets
 import shutil
 import subprocess
 import sys
-import time
 import uuid
-import zipfile
-from collections import deque
 from pathlib import Path
-from typing import Deque, List, Optional
+from typing import List, Optional
 
 import requests
 from packaging import version
 from rich.console import Console
-from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 
 from .constants import DIR_MODE, FILE_MODE, SCRIPT_MODE
 from .errors import UpgraderError
 from .models import RunContext
 from .services.archive import ArchiveService
 from .services.command_runner import CommandRunner
+from .services.database import DatabaseService
 from .services.download import DownloadService
+from .services.docker_runtime import DockerRuntimeService
 from .services.filesystem import FileSystemService
+from .services.upgrade_step import UpgradeStepService
 from .services.validation import ValidationService
 
 console = Console()
@@ -79,6 +73,17 @@ class OdooUpgrader:
             console=console,
             requests_module=requests,
         )
+        self.docker_runtime_service = DockerRuntimeService(
+            logger=logger,
+            console=console,
+            subprocess_module=subprocess,
+        )
+        self.database_service = DatabaseService(
+            logger=logger,
+            console=console,
+            filesystem_service=self.filesystem_service,
+        )
+        self.upgrade_step_service = UpgradeStepService(logger=logger, console=console)
 
         self.compose_cmd = self._get_docker_compose_cmd()
         self.run_context = self._build_run_context()
@@ -118,19 +123,7 @@ class OdooUpgrader:
         return self.command_runner.run(cmd, check=check, capture_output=capture_output)
 
     def _get_docker_compose_cmd(self) -> List[str]:
-        """Finds an available Docker Compose command."""
-        try:
-            subprocess.run(["docker", "compose", "version"], check=True, capture_output=True)
-            return ["docker", "compose"]
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            try:
-                subprocess.run(["docker-compose", "--version"], check=True, capture_output=True)
-                return ["docker-compose"]
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                raise UpgraderError(
-                    "Docker Compose is not available. Install Docker Compose v2 (`docker compose`) "
-                    "or v1 (`docker-compose`) and try again."
-                )
+        return self.docker_runtime_service.get_docker_compose_cmd()
 
     def _is_url(self, location: str) -> bool:
         return self.validation_service.is_url(location)
@@ -171,10 +164,7 @@ class OdooUpgrader:
         self.filesystem_service.cleanup_dir(path)
 
     def validate_docker_environment(self):
-        console.print("[blue]Validating Docker environment...[/blue]")
-        self._run_cmd(["docker", "--version"], capture_output=True)
-        self._run_cmd(self.compose_cmd + ["version"], capture_output=True)
-        console.print("[green]Docker is available.[/green]")
+        self.docker_runtime_service.validate_environment(self.compose_cmd, self._run_cmd)
 
     def validate_source_accessibility(self):
         """Checks source and addons inputs early with strict validation."""
@@ -331,210 +321,25 @@ class OdooUpgrader:
         raise UpgraderError("Unsupported source file format. Use `.zip` or `.dump`.")
 
     def create_db_compose_file(self):
-        context = self.run_context
-        content = f"""
-services:
-  db:
-    container_name: {context.db_container_name}
-    image: postgres:{self.postgres_version}
-    environment:
-      - POSTGRES_DB={context.postgres_bootstrap_db}
-      - POSTGRES_PASSWORD={context.postgres_password}
-      - POSTGRES_USER={context.postgres_user}
-    networks:
-      - {context.network_name}
-    volumes:
-      - {context.volume_name}:/var/lib/postgresql/data
-    restart: unless-stopped
-
-networks:
-  {context.network_name}:
-    driver: bridge
-    name: {context.network_name}
-
-volumes:
-  {context.volume_name}:
-"""
-        with open("db-composer.yml", "w", encoding="utf-8", newline="\n") as file_obj:
-            file_obj.write(content.strip())
+        self.docker_runtime_service.create_db_compose_file(
+            run_context=self.run_context,
+            postgres_version=self.postgres_version,
+        )
 
     def wait_for_db(self):
-        console.print("[yellow]Waiting for database to be ready...[/yellow]")
-        max_retries = 30
-        context = self.run_context
-
-        cmd = [
-            "docker",
-            "exec",
-            context.db_container_name,
-            "pg_isready",
-            "-U",
-            context.postgres_user,
-            "-d",
-            context.postgres_bootstrap_db,
-        ]
-
-        for _ in range(max_retries):
-            result = self._run_cmd(cmd, check=False, capture_output=True)
-            if result.returncode == 0:
-                console.print("[green]Database is ready.[/green]")
-                return
-            time.sleep(2)
-
-        raise UpgraderError(
-            "Database failed to become ready. Check Docker logs and available resources."
-        )
+        self.docker_runtime_service.wait_for_db(self.run_context, self._run_cmd)
 
     def restore_database(self, file_type: str):
-        console.print("[blue]Restoring database...[/blue]")
-        logger.info("Restoring database...")
-
-        context = self.run_context
-
-        self._run_cmd(
-            [
-                "docker",
-                "exec",
-                context.db_container_name,
-                "dropdb",
-                "-U",
-                context.postgres_user,
-                "--if-exists",
-                context.target_database,
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-        self._run_cmd(
-            [
-                "docker",
-                "exec",
-                context.db_container_name,
-                "createdb",
-                "-U",
-                context.postgres_user,
-                context.target_database,
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-        if file_type == "ZIP":
-            dump_path = os.path.join(self.source_dir, "dump.sql")
-            if not os.path.exists(dump_path):
-                sql_files = [
-                    file_name for file_name in os.listdir(self.source_dir) if file_name.endswith(".sql")
-                ]
-                if not sql_files:
-                    raise UpgraderError(
-                        "No SQL dump found inside ZIP. Ensure it contains `dump.sql` or another `.sql` file."
-                    )
-                dump_path = os.path.join(self.source_dir, sql_files[0])
-
-            source_filestore = os.path.join(self.source_dir, "filestore")
-            if os.path.exists(source_filestore):
-                try:
-                    shutil.copytree(source_filestore, self.filestore_dir, dirs_exist_ok=True)
-                    self._set_permissions(self.filestore_dir, DIR_MODE)
-                    self._set_tree_permissions(self.filestore_dir)
-                except Exception as exc:
-                    logger.warning("Failed to copy filestore: %s", exc)
-
-            self._run_cmd(
-                ["docker", "cp", dump_path, f"{context.db_container_name}:/tmp/dump.sql"],
-                check=True,
-                capture_output=True,
-            )
-
-            self._run_cmd(
-                [
-                    "docker",
-                    "exec",
-                    "-i",
-                    context.db_container_name,
-                    "psql",
-                    "-U",
-                    context.postgres_user,
-                    "-d",
-                    context.target_database,
-                    "-v",
-                    "ON_ERROR_STOP=1",
-                    "-f",
-                    "/tmp/dump.sql",
-                ],
-                check=True,
-                capture_output=True,
-            )
-            return
-
-        dump_path = os.path.join(self.source_dir, "database.dump")
-        self._run_cmd(
-            ["docker", "cp", dump_path, f"{context.db_container_name}:/tmp/database.dump"],
-            check=True,
-            capture_output=True,
-        )
-
-        self._run_cmd(
-            [
-                "docker",
-                "exec",
-                context.db_container_name,
-                "pg_restore",
-                "-U",
-                context.postgres_user,
-                "-d",
-                context.target_database,
-                "--no-owner",
-                "--no-privileges",
-                "--clean",
-                "--if-exists",
-                "--single-transaction",
-                "--exit-on-error",
-                "/tmp/database.dump",
-            ],
-            check=True,
-            capture_output=True,
+        self.database_service.restore_database(
+            file_type=file_type,
+            source_dir=self.source_dir,
+            filestore_dir=self.filestore_dir,
+            run_context=self.run_context,
+            run_cmd=self._run_cmd,
         )
 
     def get_current_version(self) -> str:
-        context = self.run_context
-        queries = [
-            "SELECT latest_version FROM ir_module_module WHERE name = 'base' AND state = 'installed';",
-            "SELECT value FROM ir_config_parameter WHERE key = 'database.latest_version';",
-            "SELECT latest_version FROM ir_module_module WHERE name = 'base' ORDER BY id DESC LIMIT 1;",
-        ]
-
-        for query in queries:
-            result = self._run_cmd(
-                [
-                    "docker",
-                    "exec",
-                    "-i",
-                    context.db_container_name,
-                    "psql",
-                    "-U",
-                    context.postgres_user,
-                    "-d",
-                    context.target_database,
-                    "-t",
-                    "-A",
-                    "-c",
-                    query,
-                ],
-                check=False,
-                capture_output=True,
-            )
-
-            if result.returncode != 0:
-                continue
-
-            for line in result.stdout.splitlines():
-                cleaned = line.strip()
-                if cleaned:
-                    return cleaned
-
-        return ""
+        return self.database_service.get_current_version(self.run_context, self._run_cmd)
 
     def get_version_info(self, ver_str: str) -> version.Version:
         try:
@@ -551,218 +356,36 @@ volumes:
             return f"{parsed.major + 1}.0"
 
     def _build_upgrade_dockerfile(self, target_version: str, include_custom_addons: bool) -> str:
-        custom_addons_section = ""
-        if include_custom_addons:
-            custom_addons_section = """
-RUN mkdir -p /mnt/custom-addons
-COPY --chown=odoo:odoo ./output/custom_addons/requirements.txt /mnt/custom-addons/requirements.txt
-RUN pip3 install --no-cache-dir -r /mnt/custom-addons/requirements.txt
-COPY --chown=odoo:odoo ./output/custom_addons/ /mnt/custom-addons/
-"""
-
-        return f"""
-FROM odoo:{target_version}
-USER root
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-RUN git clone https://github.com/OCA/OpenUpgrade.git --depth 1 --branch {target_version} /mnt/extra-addons
-RUN pip3 install --no-cache-dir -r /mnt/extra-addons/requirements.txt
-
-{custom_addons_section}
-
-USER odoo
-""".strip()
+        return self.upgrade_step_service.build_upgrade_dockerfile(
+            target_version=target_version,
+            include_custom_addons=include_custom_addons,
+        )
 
     def _build_upgrade_compose(self, extra_addons_path_arg: str) -> str:
-        context = self.run_context
-        return f"""
-services:
-  odoo-openupgrade:
-    image: odoo-openupgrade
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: {context.upgrade_container_name}
-    environment:
-      - HOST={context.db_container_name}
-      - POSTGRES_USER={context.postgres_user}
-      - POSTGRES_PASSWORD={context.postgres_password}
-    networks:
-      - {context.network_name}
-    volumes:
-      - ./output/filestore:/var/lib/odoo/filestore/{context.target_database}
-      - ./output:/var/log/odoo
-    restart: "no"
-    entrypoint: /entrypoint.sh
-    command: >
-      odoo -d {context.target_database}
-      --upgrade-path=/mnt/extra-addons/openupgrade_scripts/scripts
-      --addons-path=/mnt/extra-addons{extra_addons_path_arg}
-      --update all
-      --stop-after-init
-      --load=base,web,openupgrade_framework
-      --log-level=info
-      --logfile=/var/log/odoo/odoo.log
-networks:
-  {context.network_name}:
-    external: true
-    name: {context.network_name}
-""".strip()
+        return self.upgrade_step_service.build_upgrade_compose(
+            run_context=self.run_context,
+            extra_addons_path_arg=extra_addons_path_arg,
+        )
 
     def run_upgrade_step(self, target_version: str) -> bool:
-        logger.info("Preparing upgrade step to version %s", target_version)
-
-        include_custom_addons = bool(self.extra_addons)
-        extra_addons_path_arg = ",/mnt/custom-addons" if include_custom_addons else ""
-
-        if include_custom_addons:
-            timestamp_path = os.path.join(self.custom_addons_dir, ".build_timestamp")
-            with open(timestamp_path, "w", encoding="utf-8") as file_obj:
-                file_obj.write(str(time.time()))
-
-        dockerfile_content = self._build_upgrade_dockerfile(target_version, include_custom_addons)
-        with open("Dockerfile", "w", encoding="utf-8", newline="\n") as file_obj:
-            file_obj.write(dockerfile_content)
-
-        compose_content = self._build_upgrade_compose(extra_addons_path_arg)
-        with open("odoo-upgrade-composer.yml", "w", encoding="utf-8", newline="\n") as file_obj:
-            file_obj.write(compose_content)
-
-        self._run_cmd(
-            ["docker", "rm", "-f", self.run_context.upgrade_container_name],
-            check=False,
-            capture_output=True,
+        return self.upgrade_step_service.run_upgrade_step(
+            target_version=target_version,
+            run_context=self.run_context,
+            compose_cmd=self.compose_cmd,
+            extra_addons=self.extra_addons,
+            custom_addons_dir=self.custom_addons_dir,
+            run_cmd=self._run_cmd,
+            verbose=self.verbose,
+            subprocess_module=subprocess,
         )
-
-        cmd_up = self.compose_cmd + [
-            "-f",
-            "odoo-upgrade-composer.yml",
-            "up",
-            "--build",
-            "--abort-on-container-exit",
-        ]
-
-        last_lines: Deque[str] = deque(maxlen=40)
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            progress.add_task(f"[bold magenta]Upgrading to {target_version}...", total=None)
-
-            try:
-                process = subprocess.Popen(
-                    cmd_up,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    universal_newlines=True,
-                )
-            except Exception as exc:
-                raise UpgraderError(f"Failed to start upgrade container: {exc}") from exc
-
-            if not process.stdout:
-                raise UpgraderError("Upgrade process did not expose logs. Aborting.")
-
-            for line in process.stdout:
-                cleaned = line.rstrip()
-                if not cleaned:
-                    continue
-                last_lines.append(cleaned)
-                logger.debug(cleaned)
-                if self.verbose:
-                    console.print(f"[dim]{cleaned}[/dim]")
-
-            process.wait()
-
-            if process.returncode != 0:
-                logger.error("Upgrade process returned non-zero exit code: %s", process.returncode)
-                if last_lines:
-                    logger.error("Recent upgrade logs:\n%s", "\n".join(last_lines))
-                    console.print("[red]Recent upgrade logs:[/red]")
-                    for line in last_lines:
-                        console.print(f"[red]{line}[/red]")
-                return False
-
-        inspect_result = self._run_cmd(
-            [
-                "docker",
-                "inspect",
-                self.run_context.upgrade_container_name,
-                "--format={{.State.ExitCode}}",
-            ],
-            check=False,
-            capture_output=True,
-        )
-
-        if inspect_result.returncode != 0:
-            logger.error("Could not inspect upgrade container exit code.")
-            return False
-
-        try:
-            exit_code = int(inspect_result.stdout.strip() or "1")
-        except ValueError:
-            logger.error("Invalid exit code from inspect: %s", inspect_result.stdout)
-            return False
-
-        if exit_code == 0:
-            console.print(f"[green]Upgrade to {target_version} successful.[/green]")
-            self._run_cmd(
-                self.compose_cmd + ["-f", "odoo-upgrade-composer.yml", "down"],
-                check=False,
-                capture_output=True,
-            )
-            return True
-
-        console.print(f"[bold red]Container exited with code {exit_code}[/bold red]")
-        return False
 
     def finalize_package(self):
-        console.print("[blue]Creating final package...[/blue]")
-        logger.info("Creating final package...")
-
-        context = self.run_context
-        dump_path = os.path.join(self.output_dir, "dump.sql")
-
-        try:
-            with open(dump_path, "w", encoding="utf-8") as file_obj:
-                subprocess.run(
-                    [
-                        "docker",
-                        "exec",
-                        context.db_container_name,
-                        "pg_dump",
-                        "-U",
-                        context.postgres_user,
-                        context.target_database,
-                    ],
-                    stdout=file_obj,
-                    check=True,
-                    text=True,
-                )
-        except Exception as exc:
-            raise UpgraderError(f"Failed to dump final database: {exc}") from exc
-
-        zip_name = os.path.join(self.output_dir, "upgraded.zip")
-        with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            zip_file.write(dump_path, "dump.sql")
-
-            if os.path.exists(self.filestore_dir):
-                for root, _, files in os.walk(self.filestore_dir):
-                    for file_name in files:
-                        file_path = os.path.join(root, file_name)
-                        archive_name = os.path.relpath(file_path, self.output_dir)
-                        zip_file.write(file_path, archive_name)
-
-        console.print(f"[bold green]Upgrade Complete! Package available at: {zip_name}[/bold green]")
-        logger.info("Upgrade complete. Package: %s", zip_name)
-
-        try:
-            os.remove(dump_path)
-        except OSError:
-            pass
+        self.database_service.finalize_package(
+            output_dir=self.output_dir,
+            filestore_dir=self.filestore_dir,
+            run_context=self.run_context,
+            subprocess_module=subprocess,
+        )
 
     def cleanup_artifacts(self):
         logger.info("Cleaning up artifacts...")
@@ -771,22 +394,7 @@ networks:
         self._cleanup_dir(self.custom_addons_dir)
 
     def cleanup(self):
-        console.print("[dim]Cleaning up Docker environment...[/dim]")
-        logger.info("Cleaning up Docker environment...")
-
-        if os.path.exists("odoo-upgrade-composer.yml"):
-            self._run_cmd(
-                self.compose_cmd + ["-f", "odoo-upgrade-composer.yml", "down"],
-                check=False,
-                capture_output=True,
-            )
-
-        if os.path.exists("db-composer.yml"):
-            self._run_cmd(
-                self.compose_cmd + ["-f", "db-composer.yml", "down", "-v"],
-                check=False,
-                capture_output=True,
-            )
+        self.docker_runtime_service.cleanup_docker_environment(self.compose_cmd, self._run_cmd)
 
         for file_name in ["Dockerfile", "odoo-upgrade-composer.yml", "db-composer.yml"]:
             if os.path.exists(file_name):
