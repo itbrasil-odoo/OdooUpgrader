@@ -2,7 +2,7 @@ name: Security
 
 on:
   push:
-    branches: ["main", "dev"]
+    branches: ["main", "dev", "hardening/**"]
     paths:
       - "src/**"
       - "pyproject.toml"
@@ -15,6 +15,7 @@ on:
       - ".github/workflows/**"
   schedule:
     - cron: "0 5 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
