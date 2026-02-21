@@ -1,13 +1,16 @@
 import logging
 import os
+import re
 import secrets
 import shutil
 import subprocess
 import sys
 import uuid
+import zipfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 from packaging import version
@@ -50,6 +53,7 @@ class OdooUpgrader:
         retry_count: int = 1,
         retry_backoff_seconds: float = 2.0,
         step_timeout_minutes: int = 120,
+        dry_run: bool = False,
     ):
         self.source = source
         self.target_version = target_version
@@ -67,6 +71,7 @@ class OdooUpgrader:
         self.retry_count = retry_count
         self.retry_backoff_seconds = retry_backoff_seconds
         self.step_timeout_minutes = step_timeout_minutes
+        self.dry_run = dry_run
         if self.download_timeout <= 0:
             raise UpgraderError("--download-timeout must be greater than zero.")
         if self.retry_count < 0:
@@ -160,6 +165,7 @@ class OdooUpgrader:
             {
                 "resume_enabled": self.resume,
                 "state_file": self.state_file if self.resume else None,
+                "dry_run": self.dry_run,
             }
         )
         return metadata
@@ -468,6 +474,73 @@ class OdooUpgrader:
             parsed = version.parse(current)
             return f"{parsed.major + 1}.0"
 
+    def _infer_source_version_for_dry_run(self) -> str:
+        from_filename = self._infer_version_from_path(self.source)
+        if from_filename:
+            return from_filename
+
+        if self.validation_service.is_url(self.source):
+            raise UpgraderError(
+                "Could not infer source version for --dry-run from URL name. "
+                "Use a source filename containing the major version (example: odoo14.dump)."
+            )
+
+        source_path = Path(self.source)
+        if source_path.suffix.lower() == ".zip" and source_path.exists():
+            inferred = self._infer_version_from_zip(source_path)
+            if inferred:
+                return inferred
+
+        raise UpgraderError(
+            "Could not infer source version for --dry-run. "
+            "Use a source filename containing the major version (example: odoo14.dump)."
+        )
+
+    def _infer_version_from_path(self, source: str) -> Optional[str]:
+        path = urlparse(source).path if self.validation_service.is_url(source) else source
+        filename = Path(path).name.lower()
+        match = re.search(r"(?<!\\d)(1[0-9])(?:\\.0)?(?!\\d)", filename)
+        if not match:
+            return None
+
+        candidate = f"{int(match.group(1))}.0"
+        if candidate in self.VALID_VERSIONS:
+            return candidate
+        return None
+
+    def _infer_version_from_zip(self, source_zip: Path) -> Optional[str]:
+        try:
+            with zipfile.ZipFile(source_zip, "r") as archive:
+                sql_candidates = [
+                    name for name in archive.namelist() if name.endswith(".sql") and not name.startswith("__MACOSX")
+                ]
+                for sql_name in sql_candidates:
+                    with archive.open(sql_name, "r") as sql_file:
+                        chunk = sql_file.read(2 * 1024 * 1024).decode("utf-8", errors="ignore")
+                    match = re.search(r"(1[0-9])\\.0", chunk)
+                    if not match:
+                        continue
+                    candidate = f"{int(match.group(1))}.0"
+                    if candidate in self.VALID_VERSIONS:
+                        return candidate
+        except (OSError, zipfile.BadZipFile):
+            return None
+        return None
+
+    def _build_upgrade_plan(self, source_version: str, target_version: str) -> List[str]:
+        plan = [source_version]
+        current = source_version
+        seen = set()
+        while current != target_version:
+            if current in seen:
+                raise UpgraderError(f"Unable to build dry-run plan due to version loop at {current}.")
+            seen.add(current)
+            current = self.generate_next_version(current)
+            if current not in self.VALID_VERSIONS:
+                raise UpgraderError(f"No supported upgrade path from {source_version} to {target_version}.")
+            plan.append(current)
+        return plan
+
     def _build_upgrade_dockerfile(self, target_version: str, include_custom_addons: bool) -> str:
         openupgrade_cache_relpath = os.path.join(
             "output", ".cache", "openupgrade", target_version
@@ -527,6 +600,7 @@ class OdooUpgrader:
     def run(self) -> int:
         exit_code = 1
         preserve_runtime_for_resume = False
+        skip_cleanup = False
         manifest_status = "failed"
         manifest_error: Optional[str] = None
 
@@ -536,12 +610,36 @@ class OdooUpgrader:
             if self.target_version not in self.VALID_VERSIONS:
                 raise UpgraderError(f"Invalid version. Supported versions: {', '.join(self.VALID_VERSIONS)}")
 
-            resumed = self._initialize_state()
+            resumed = False
+            if not self.dry_run:
+                resumed = self._initialize_state()
             self.manifest_service.start_run(
                 run_id=self.run_context.run_id,
                 metadata=self._build_manifest_metadata(),
             )
             self.manifest_service.set_versions(source=None, target=self.target_version, current=None)
+
+            if self.dry_run:
+                skip_cleanup = True
+                self._run_step("validate_source_accessibility", self.validate_source_accessibility)
+                source_version = self._infer_source_version_for_dry_run()
+                plan = self._build_upgrade_plan(source_version, self.target_version)
+
+                console.print("[bold cyan]Dry-run upgrade plan:[/bold cyan]")
+                for idx in range(len(plan) - 1):
+                    console.print(f"[cyan]{plan[idx]} -> {plan[idx + 1]}[/cyan]")
+
+                self.manifest_service.set_versions(
+                    source=source_version,
+                    target=self.target_version,
+                    current=source_version,
+                )
+                self.manifest_service.add_artifact("dry_run", "true")
+                self.manifest_service.add_artifact("planned_steps", ",".join(plan))
+                manifest_status = "success"
+                manifest_error = None
+                exit_code = 0
+                return exit_code
 
             self._run_step("validate_docker_environment", self.validate_docker_environment)
             self._run_step("validate_source_accessibility", self.validate_source_accessibility)
@@ -723,7 +821,9 @@ class OdooUpgrader:
             return exit_code
         finally:
             self.manifest_service.finalize(manifest_status, error=manifest_error)
-            if preserve_runtime_for_resume:
+            if skip_cleanup:
+                logger.info("Dry-run mode enabled. Skipping runtime cleanup.")
+            elif preserve_runtime_for_resume:
                 logger.warning(
                     "Preserving runtime artifacts and containers for resume mode. "
                     "Run again with --resume to continue from the last completed step."

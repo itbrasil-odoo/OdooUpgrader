@@ -293,3 +293,28 @@ def test_rejects_unsupported_source_extension(tmp_path, patch_compose_detection)
 
     with pytest.raises(UpgraderError, match="Invalid source format"):
         upgrader.validate_source_accessibility()
+
+
+def test_dry_run_builds_plan_without_docker_runtime(tmp_path, monkeypatch, patch_compose_detection):
+    source = tmp_path / "sample_odoo14.dump"
+    source.write_text("synthetic", encoding="utf-8")
+
+    upgrader = OdooUpgrader(
+        source=str(source),
+        target_version="16.0",
+        dry_run=True,
+    )
+
+    docker_called = {"value": False}
+    cleanup_called = {"value": False}
+
+    def fail_if_called():
+        docker_called["value"] = True
+        raise AssertionError("Docker validation should not run during --dry-run")
+
+    monkeypatch.setattr(upgrader, "validate_docker_environment", fail_if_called)
+    monkeypatch.setattr(upgrader, "cleanup", lambda: cleanup_called.__setitem__("value", True))
+
+    assert upgrader.run() == 0
+    assert docker_called["value"] is False
+    assert cleanup_called["value"] is False

@@ -107,6 +107,12 @@ logging.basicConfig(
     default=None,
     help="Timeout for each OpenUpgrade step in minutes.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=None,
+    help="Validate inputs and print upgrade plan without running Docker or changing state.",
+)
 def main(
     source,
     version,
@@ -124,6 +130,7 @@ def main(
     retry_count,
     retry_backoff_seconds,
     step_timeout_minutes,
+    dry_run,
 ):
     """Automate incremental Odoo database upgrades using OpenUpgrade."""
     logger = logging.getLogger("odooupgrader")
@@ -168,6 +175,7 @@ def main(
     step_timeout_minutes = int(
         _resolve_option(step_timeout_minutes, config_values, "step_timeout_minutes", default=120)
     )
+    dry_run = bool(_resolve_option(dry_run, config_values, "dry_run", default=False))
 
     if not source:
         raise click.ClickException("Missing required option '--source' (or provide it in config).")
@@ -202,6 +210,7 @@ def main(
             retry_count=retry_count,
             retry_backoff_seconds=retry_backoff_seconds,
             step_timeout_minutes=step_timeout_minutes,
+            dry_run=dry_run,
         )
     except UpgraderError as exc:
         raise click.ClickException(str(exc)) from exc
