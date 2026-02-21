@@ -18,6 +18,7 @@ from rich.console import Console
 
 from .constants import DIR_MODE, FILE_MODE, SCRIPT_MODE
 from .errors import UpgraderError
+from .errors_catalog import actionable_error
 from .models import RunContext
 from .services.archive import ArchiveService
 from .services.command_runner import CommandRunner
@@ -743,8 +744,7 @@ class OdooUpgrader:
                 upgrade_result, _ = self._run_step(step_name, self.run_upgrade_step, next_ver_str)
                 if not upgrade_result:
                     raise UpgraderError(
-                        f"Upgrade step to {next_ver_str} failed. "
-                        "Review container logs in output/odoo.log and retry."
+                        actionable_error("upgrade_step_failed", target_version=next_ver_str)
                     )
 
                 new_ver_str, _ = self._run_step(

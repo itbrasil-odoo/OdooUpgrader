@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import requests
 
 from odooupgrader.constants import ADDONS_ZIP_EXTENSION, SOURCE_EXTENSIONS
+from odooupgrader.errors_catalog import actionable_error
 from odooupgrader.errors import UpgraderError
 
 
@@ -31,15 +32,12 @@ class ValidationService:
     def ensure_supported_source_extension(self, location: str):
         ext = self.get_location_extension(location)
         if ext not in SOURCE_EXTENSIONS:
-            raise UpgraderError(
-                "Invalid source format. Supported formats are `.zip` and `.dump`. "
-                "Provide a source file/URL ending with one of these extensions."
-            )
+            raise UpgraderError(actionable_error("invalid_source_format"))
 
     def ensure_supported_addons_extension(self, location: str):
         ext = self.get_location_extension(location)
         if ext != ADDONS_ZIP_EXTENSION:
-            raise UpgraderError("Invalid addons format. Remote or file addons must be a `.zip` file.")
+            raise UpgraderError(actionable_error("invalid_addons_format"))
 
     def enforce_https_policy(self, location: str, label: str, logger, console):
         if not self.is_url(location):
@@ -47,10 +45,7 @@ class ValidationService:
 
         scheme = urlparse(location).scheme.lower()
         if scheme == "http" and not self.allow_insecure_http:
-            raise UpgraderError(
-                f"{label} uses insecure HTTP. Use HTTPS instead, or pass "
-                "`--allow-insecure-http` only when you explicitly trust the endpoint."
-            )
+            raise UpgraderError(actionable_error("insecure_http", label=label))
 
         if scheme == "http" and self.allow_insecure_http:
             logger.warning("Insecure HTTP enabled for %s: %s", label, location)
@@ -87,7 +82,7 @@ class ValidationService:
             self.probe_url(source, "source URL", logger, console)
         else:
             if not Path(source).exists():
-                raise UpgraderError(f"Source file not found: {source}")
+                raise UpgraderError(actionable_error("source_not_found", path=source))
             if not Path(source).is_file():
                 raise UpgraderError(f"Source path must be a file: {source}")
 
@@ -101,7 +96,7 @@ class ValidationService:
 
         addons_path = Path(extra_addons)
         if not addons_path.exists():
-            raise UpgraderError(f"Extra addons path not found: {extra_addons}")
+            raise UpgraderError(actionable_error("extra_addons_not_found", path=extra_addons))
 
         if addons_path.is_dir():
             self.validate_addons_structure(addons_path)
