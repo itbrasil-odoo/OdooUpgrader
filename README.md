@@ -13,6 +13,7 @@ Professional command-line tool for automating Odoo database upgrades using [OCA 
 - Runtime-isolated Docker resources (unique network/container/volume per execution)
 - Streamed download progress with optional SHA-256 verification
 - Hardened ZIP extraction (path traversal and symlink protections)
+- Optional module audit for installed modules + OCA target-version availability
 - Rich CLI output and optional log file
 
 ## Requirements
@@ -102,6 +103,18 @@ odooupgrader \
   --dry-run
 ```
 
+### Module audit before migration
+
+```bash
+odooupgrader \
+  --source ./database.dump \
+  --version 18.0 \
+  --extra-addons ./extra_addons \
+  --analyze-modules \
+  --analyze-modules-only \
+  --module-audit-file ./output/module-audit.json
+```
+
 ### Configuration file usage
 
 ```bash
@@ -129,6 +142,10 @@ odooupgrader --config .odooupgrader.yml --source ./override.dump
 | `--step-timeout-minutes` | ❌ | Timeout per OpenUpgrade step |
 | `--config` | ❌ | YAML config file (`.odooupgrader.yml`) |
 | `--dry-run` | ❌ | Validate inputs and print upgrade plan without running Docker |
+| `--analyze-modules` | ❌ | Audit installed modules and check OCA module existence on target version |
+| `--analyze-modules-only` | ❌ | Stop after module audit without running upgrade steps |
+| `--strict-module-audit` | ❌ | Fail run when module audit finds missing OCA modules/check errors |
+| `--module-audit-file` | ❌ | Output path for module audit JSON report |
 
 ## How it works
 
@@ -158,6 +175,7 @@ See `docs/architecture.md` for the full responsibility map and flow.
 output/
 ├── upgraded.zip
 ├── odoo.log
+├── module-audit.json (when `--analyze-modules` is enabled)
 ├── run-manifest.json
 └── run-state.json (when `--resume` is enabled)
 ```
