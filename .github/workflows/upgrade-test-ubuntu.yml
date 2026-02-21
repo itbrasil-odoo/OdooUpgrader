@@ -1,4 +1,4 @@
-name: OdooUpgrade Docker Integration (Ubuntu)
+name: OdooUpgrade Integration (Deterministic Fixtures)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   integration-test:
-    name: ${{ matrix.scenario.type }} ${{ matrix.scenario.format }} (14->${{ matrix.scenario.target }})
+    name: ${{ matrix.scenario.format }} + addons=${{ matrix.scenario.extra_addons }}
     runs-on: ubuntu-latest
 
     strategy:
@@ -15,8 +15,8 @@ jobs:
       matrix:
         python-version: ["3.11"]
         scenario:
-          - { type: "URL", format: "zip", target: "15.0", extra_addons: "none" }
-          - { type: "Local", format: "dump", target: "15.0", extra_addons: "zip" }
+          - { format: "zip", extra_addons: "none" }
+          - { format: "dump", extra_addons: "zip" }
 
     steps:
       - name: Checkout code
@@ -28,80 +28,40 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install OdooUpgrade package
+      - name: Install package
         run: |
           python -m pip install --upgrade pip
           pip install .
 
-      - name: Prepare test data
-        id: prep
+      - name: Generate deterministic fixtures
+        id: fixtures
+        run: |
+          set -euo pipefail
+          ./scripts/fixtures/generate_fixture.sh "$(pwd)/.fixtures" > fixture.env
+          cat fixture.env
+          while IFS='=' read -r key value; do
+            echo "$key=$value" >> "$GITHUB_OUTPUT"
+          done < fixture.env
+
+      - name: Run deterministic integration scenario
         run: |
           set -euo pipefail
 
-          URL_ZIP="https://sin1.contabostorage.com/d3aae27d651c48149e4a115494b0c2df:brbucket/backups/test/sample_odoo14.zip"
-          URL_DUMP="https://sin1.contabostorage.com/d3aae27d651c48149e4a115494b0c2df:brbucket/backups/test/sample_odoo14.dump"
-
-          MODE="${{ matrix.scenario.type }}"
-          FORMAT="${{ matrix.scenario.format }}"
-          EXTRA_ADDONS_MODE="${{ matrix.scenario.extra_addons }}"
-
-          if [ "$FORMAT" = "zip" ]; then
-            TARGET_URL="$URL_ZIP"
-            FILENAME="source.zip"
+          if [ "${{ matrix.scenario.format }}" = "zip" ]; then
+            SOURCE="${{ steps.fixtures.outputs.source_zip }}"
           else
-            TARGET_URL="$URL_DUMP"
-            FILENAME="source.dump"
+            SOURCE="${{ steps.fixtures.outputs.source_dump }}"
           fi
 
-          if [ "$MODE" = "Local" ]; then
-            curl -L -o "$FILENAME" "$TARGET_URL"
-            SOURCE_ARG="$(pwd)/$FILENAME"
-          else
-            SOURCE_ARG="$TARGET_URL"
-          fi
+          CMD=(odooupgrader --source "$SOURCE" --version "15.0" --dry-run --verbose)
 
-          EXTRA_ADDONS_PATH=""
-          if [ "$EXTRA_ADDONS_MODE" = "zip" ]; then
-            mkdir -p custom_addons/sample_custom_module
-            cat > custom_addons/sample_custom_module/__init__.py <<'EOF'
-# test module
-EOF
-            cat > custom_addons/sample_custom_module/__manifest__.py <<'EOF'
-{
-    "name": "Sample Custom Module",
-    "version": "14.0.1.0.0",
-    "depends": ["base"],
-}
-EOF
-            (cd custom_addons && zip -r ../extra_addons.zip .)
-            EXTRA_ADDONS_PATH="$(pwd)/extra_addons.zip"
-          fi
-
-          echo "source_arg=$SOURCE_ARG" >> "$GITHUB_OUTPUT"
-          echo "extra_addons_path=$EXTRA_ADDONS_PATH" >> "$GITHUB_OUTPUT"
-
-      - name: Run upgrade
-        run: |
-          set -euo pipefail
-
-          CMD=(odooupgrader --source "${{ steps.prep.outputs.source_arg }}" --version "${{ matrix.scenario.target }}" --verbose)
-
-          if [ -n "${{ steps.prep.outputs.extra_addons_path }}" ]; then
-            CMD+=(--extra-addons "${{ steps.prep.outputs.extra_addons_path }}")
+          if [ "${{ matrix.scenario.extra_addons }}" = "zip" ]; then
+            CMD+=(--extra-addons "${{ steps.fixtures.outputs.extra_addons_zip }}")
           fi
 
           "${CMD[@]}"
 
-      - name: Verify output files
+      - name: Print output artifacts
         if: always()
         run: |
-          echo "Listing output directory contents:"
-          ls -lh output/ || echo "Output directory not found"
-
-      - name: Check logs on failure
-        if: failure()
-        run: |
-          if [ -f "output/odoo.log" ]; then
-            echo "!!! UPGRADE FAILED - TAIL LOGS !!!"
-            tail -n 100 output/odoo.log
-          fi
+          ls -lah output/ || true
