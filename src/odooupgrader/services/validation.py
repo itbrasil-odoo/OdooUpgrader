@@ -1,6 +1,7 @@
 """Input and URL validation helpers for OdooUpgrader."""
 
 import ast
+import re
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -76,7 +77,12 @@ class ValidationService:
         raise UpgraderError(f"{label} is not accessible: {last_error}")
 
     def validate_source_accessibility(
-        self, source: str, extra_addons: Optional[str], logger, console
+        self,
+        source: str,
+        extra_addons: Optional[str],
+        logger,
+        console,
+        target_version: Optional[str] = None,
     ):
         self.ensure_supported_source_extension(source)
 
@@ -101,7 +107,7 @@ class ValidationService:
             raise UpgraderError(actionable_error("extra_addons_not_found", path=extra_addons))
 
         if addons_path.is_dir():
-            self.validate_addons_structure(addons_path)
+            self.validate_addons_structure(addons_path, target_version=target_version)
             return
 
         if addons_path.is_file():
@@ -113,7 +119,9 @@ class ValidationService:
             "or an HTTPS URL to a `.zip` file."
         )
 
-    def validate_addons_structure(self, addons_path: Path):
+    def validate_addons_structure(
+        self, addons_path: Path, target_version: Optional[str] = None
+    ):
         if not addons_path.exists() or not addons_path.is_dir():
             raise UpgraderError(f"Extra addons directory not found: {addons_path}")
 
@@ -125,7 +133,7 @@ class ValidationService:
             )
 
         for module_dir in module_dirs:
-            self._validate_manifest(module_dir)
+            self._validate_manifest(module_dir, target_version=target_version)
 
     def _is_odoo_module(self, path: Path) -> bool:
         return any((path / manifest_name).is_file() for manifest_name in self.MANIFEST_FILES)
@@ -149,7 +157,7 @@ class ValidationService:
     def _is_hidden_or_cache_path(self, path: Path) -> bool:
         return any(part.startswith(".") or part == "__pycache__" for part in path.parts)
 
-    def _validate_manifest(self, module_path: Path):
+    def _validate_manifest(self, module_path: Path, target_version: Optional[str] = None):
         manifest_file = None
         for file_name in self.MANIFEST_FILES:
             candidate = module_path / file_name
@@ -175,6 +183,7 @@ class ValidationService:
 
         name = manifest_data.get("name")
         depends = manifest_data.get("depends", [])
+        manifest_version = manifest_data.get("version")
         if not isinstance(name, str) or not name.strip():
             raise UpgraderError(f"Manifest '{manifest_file}' must define a non-empty 'name'.")
 
@@ -183,4 +192,45 @@ class ValidationService:
         ):
             raise UpgraderError(
                 f"Manifest '{manifest_file}' has invalid 'depends'. It must be a list of module names."
+            )
+
+        if manifest_version is not None and not isinstance(manifest_version, str):
+            raise UpgraderError(f"Manifest '{manifest_file}' has invalid 'version' value.")
+
+        if target_version and isinstance(manifest_version, str):
+            self._validate_manifest_version_for_target(
+                manifest_file=manifest_file,
+                manifest_version=manifest_version,
+                target_version=target_version,
+            )
+
+    def _validate_manifest_version_for_target(
+        self,
+        manifest_file: Path,
+        manifest_version: str,
+        target_version: str,
+    ):
+        clean_version = manifest_version.strip()
+        if not clean_version:
+            return
+
+        if not re.fullmatch(r"\d+\.\d+(?:\.\d+){0,3}", clean_version):
+            raise UpgraderError(
+                f"Manifest '{manifest_file}' has invalid version '{manifest_version}'. "
+                "Use versions like 'x.y', 'x.y.z', or target-prefixed variants such as "
+                f"'{target_version}.x.y'."
+            )
+
+        parts = clean_version.split(".")
+        target_major_minor = target_version.split(".")
+        if len(target_major_minor) < 2:
+            return
+
+        if len(parts) >= 4 and (
+            parts[0] != target_major_minor[0] or parts[1] != target_major_minor[1]
+        ):
+            raise UpgraderError(
+                f"Manifest '{manifest_file}' uses version '{manifest_version}', which is "
+                f"incompatible with target '{target_version}'. "
+                "Use addons from the target branch/version before upgrading."
             )

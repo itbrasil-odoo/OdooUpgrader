@@ -332,6 +332,7 @@ class OdooUpgrader:
             extra_addons=self.extra_addons,
             logger=logger,
             console=console,
+            target_version=self.target_version,
         )
 
         if self.validation_service.is_url(self.source):
