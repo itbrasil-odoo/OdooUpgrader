@@ -93,6 +93,21 @@ odooupgrader \
   --log-file upgrade.log
 ```
 
+### Dry-run execution planning
+
+```bash
+odooupgrader \
+  --source ./sample_odoo14.dump \
+  --version 15.0 \
+  --dry-run
+```
+
+### Configuration file usage
+
+```bash
+odooupgrader --config .odooupgrader.yml --source ./override.dump
+```
+
 ## Command-line options
 
 | Option | Required | Description |
@@ -106,6 +121,14 @@ odooupgrader \
 | `--allow-insecure-http` | ❌ | Allow `http://` URLs (default blocks HTTP) |
 | `--source-sha256` | ❌ | Expected SHA-256 of remote source download |
 | `--extra-addons-sha256` | ❌ | Expected SHA-256 of remote addons download |
+| `--resume` | ❌ | Resume interrupted runs using persisted state |
+| `--state-file` | ❌ | Custom path for state file (`output/run-state.json`) |
+| `--download-timeout` | ❌ | Download timeout in seconds |
+| `--retry-count` | ❌ | Retries for transient download/runtime failures |
+| `--retry-backoff-seconds` | ❌ | Backoff between retries |
+| `--step-timeout-minutes` | ❌ | Timeout per OpenUpgrade step |
+| `--config` | ❌ | YAML config file (`.odooupgrader.yml`) |
+| `--dry-run` | ❌ | Validate inputs and print upgrade plan without running Docker |
 
 ## How it works
 
@@ -134,7 +157,9 @@ See `docs/architecture.md` for the full responsibility map and flow.
 ```text
 output/
 ├── upgraded.zip
-└── odoo.log
+├── odoo.log
+├── run-manifest.json
+└── run-state.json (when `--resume` is enabled)
 ```
 
 ## Security defaults
@@ -144,6 +169,7 @@ output/
 - ZIP extraction rejects traversal/symlink entries
 - Temporary Docker credentials are generated per execution
 - Docker runtime names are generated per execution (collision-safe)
+- Addon manifests are validated with safe parsing rules
 
 ## Supported versions
 
@@ -160,6 +186,7 @@ MIT. See [LICENSE](LICENSE).
 ## Support
 
 - Issues: [GitHub Issues](https://github.com/itbrasil-odoo/OdooUpgrader/issues)
+- Scope matrix: [docs/support-matrix.md](docs/support-matrix.md)
 
 ## Changelog
 
