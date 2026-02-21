@@ -144,3 +144,24 @@ def test_restore_binary_dump_raises_actionable_error_on_pg_restore_version_misma
 
     with pytest.raises(UpgraderError, match="--postgres-version"):
         service.restore_database("DUMP", str(source_dir), str(filestore_dir), _context(), fake_run_cmd)
+
+
+def test_prepare_filestore_structure_creates_parent_dirs_from_attachment_paths(tmp_path):
+    service = DatabaseService(
+        logger=DummyLogger(),
+        console=DummyConsole(),
+        filesystem_service=DummyFilesystem(),
+    )
+    filestore_dir = tmp_path / "filestore"
+    filestore_dir.mkdir(parents=True)
+
+    def fake_run_cmd(cmd, check=False, capture_output=True, **kwargs):  # noqa: ARG001
+        stdout = "44/44d1661b24fa9f688091c8256535434b60aafba7\n13e7c8\nnested/path/aa\n../../bad\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+    service.prepare_filestore_structure(str(filestore_dir), _context(), fake_run_cmd)
+
+    assert (filestore_dir / "checklist" / "44").is_dir()
+    assert (filestore_dir / "checklist").is_dir()
+    assert (filestore_dir / "checklist" / "nested" / "path").is_dir()
+    assert not (filestore_dir / ".." / ".." / "bad").exists()

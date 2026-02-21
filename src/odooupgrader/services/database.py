@@ -322,6 +322,78 @@ class DatabaseService:
 
         return ""
 
+    def prepare_filestore_structure(self, filestore_dir: str, run_context, run_cmd):
+        query = (
+            "SELECT DISTINCT store_fname "
+            "FROM ir_attachment "
+            "WHERE store_fname IS NOT NULL "
+            "AND store_fname <> '';"
+        )
+
+        result = run_cmd(
+            [
+                "docker",
+                "exec",
+                "-i",
+                run_context.db_container_name,
+                "psql",
+                "-U",
+                run_context.postgres_user,
+                "-d",
+                run_context.target_database,
+                "-t",
+                "-A",
+                "-c",
+                query,
+            ],
+            check=False,
+            capture_output=True,
+        )
+
+        if result.returncode != 0:
+            self.logger.warning(
+                "Could not inspect filestore hierarchy from ir_attachment. "
+                "Continuing without directory pre-creation."
+            )
+            return
+
+        created_dirs: Set[str] = set()
+        skipped_paths = 0
+        for line in result.stdout.splitlines():
+            raw_fname = line.strip()
+            if not raw_fname:
+                continue
+
+            # Mirror Odoo's _mark_for_gc sanitization to pre-create checklist parents.
+            sanitized_fname = re.sub(r"[.]", "", raw_fname).strip("/\\")
+            if not sanitized_fname:
+                continue
+
+            posix_fname = PurePosixPath(sanitized_fname)
+            if ".." in posix_fname.parts:
+                skipped_paths += 1
+                self.logger.warning(
+                    "Skipping suspicious attachment store_fname while preparing filestore: %s",
+                    raw_fname,
+                )
+                continue
+
+            checklist_parent = PurePosixPath("checklist", *posix_fname.parts[:-1])
+            host_dir = os.path.join(filestore_dir, *checklist_parent.parts)
+            os.makedirs(host_dir, exist_ok=True)
+            created_dirs.add(host_dir)
+
+        if created_dirs:
+            self.logger.info(
+                "Prepared %s filestore checklist directories from attachment metadata.",
+                len(created_dirs),
+            )
+        if skipped_paths:
+            self.logger.warning(
+                "Skipped %s potentially unsafe filestore paths from attachment metadata.",
+                skipped_paths,
+            )
+
     def finalize_package(self, output_dir: str, filestore_dir: str, run_context, subprocess_module):
         self.console.print("[blue]Creating final package...[/blue]")
         self.logger.info("Creating final package...")

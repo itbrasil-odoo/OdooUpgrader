@@ -3,13 +3,43 @@
 import os
 import time
 from collections import deque
-from typing import Deque, Optional
+from pathlib import Path, PurePosixPath
+from typing import Deque, List, Optional
 
 from odooupgrader.errors import UpgraderError
 
 
 class UpgradeStepService:
     """Builds/runs per-version OpenUpgrade container steps."""
+
+    MANIFEST_FILES = ("__manifest__.py", "__openerp__.py")
+    CONTAINER_DATA_DIR = "/tmp/odooupgrader-data"
+    CONTAINER_LOG_DIR = "/tmp/odooupgrader-output"
+    LOG_PATH = os.path.join("output", "odoo.log")
+    TRANSIENT_FAILURE_PATTERNS = (
+        "connection reset",
+        "temporary failure",
+        "name resolution",
+        "timed out",
+        "timeout",
+        "network is unreachable",
+        "no route to host",
+        "service unavailable",
+        "context deadline exceeded",
+        "i/o timeout",
+        "unexpected eof",
+        "tls handshake timeout",
+        "too many requests",
+        "429",
+    )
+    NON_RETRYABLE_FAILURE_PATTERNS = (
+        "invalid manifest",
+        "invalid version",
+        "odoo.tools.convert.parseerror",
+        "psycopg2.errors.",
+        "duplicate table",
+        "already exists",
+    )
 
     def __init__(self, logger, console):
         self.logger = logger
@@ -33,6 +63,7 @@ COPY --chown=odoo:odoo ./output/custom_addons/ /mnt/custom-addons/
         return f"""
 FROM odoo:{target_version}
 USER root
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 COPY --chown=odoo:odoo ./{openupgrade_cache_relpath}/ /mnt/extra-addons/
 RUN pip3 install --no-cache-dir -r /mnt/extra-addons/requirements.txt
 
@@ -41,7 +72,69 @@ RUN pip3 install --no-cache-dir -r /mnt/extra-addons/requirements.txt
 USER odoo
 """.strip()
 
-    def build_upgrade_compose(self, run_context, extra_addons_path_arg: str) -> str:
+    def discover_custom_addons_paths(self, custom_addons_dir: str) -> List[str]:
+        root = Path(custom_addons_dir)
+        if not root.exists() or not root.is_dir():
+            return []
+
+        container_root = PurePosixPath("/mnt/custom-addons")
+        discovered: set[str] = set()
+
+        for manifest_name in self.MANIFEST_FILES:
+            for manifest_path in root.rglob(manifest_name):
+                if not manifest_path.is_file():
+                    continue
+                if self._is_hidden_or_cache_path(manifest_path):
+                    continue
+
+                module_dir = manifest_path.parent
+                try:
+                    relative_parent = module_dir.relative_to(root).parent
+                except ValueError:
+                    continue
+
+                if str(relative_parent) == ".":
+                    discovered.add(str(container_root))
+                    continue
+
+                discovered.add(str(container_root.joinpath(*relative_parent.parts)))
+
+        return sorted(discovered)
+
+    @staticmethod
+    def _is_hidden_or_cache_path(path: Path) -> bool:
+        return any(part.startswith(".") or part == "__pycache__" for part in path.parts)
+
+    @staticmethod
+    def _read_log_delta(log_path: str, offset: int) -> str:
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as file_obj:
+                file_obj.seek(max(0, offset))
+                return file_obj.read()
+        except OSError:
+            return ""
+
+    def _is_transient_failure(self, evidence: str) -> bool:
+        text = evidence.lower()
+        if not text.strip():
+            return False
+
+        if any(pattern in text for pattern in self.NON_RETRYABLE_FAILURE_PATTERNS):
+            return False
+
+        return any(pattern in text for pattern in self.TRANSIENT_FAILURE_PATTERNS)
+
+    def build_upgrade_compose(
+        self,
+        run_context,
+        extra_addons_path_arg: str,
+        runtime_uid: Optional[int] = None,
+        runtime_gid: Optional[int] = None,
+    ) -> str:
+        runtime_user_block = ""
+        if runtime_uid is not None and runtime_gid is not None:
+            runtime_user_block = f'\n    user: "{runtime_uid}:{runtime_gid}"'
+
         return f"""
 services:
   odoo-openupgrade:
@@ -50,6 +143,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: {run_context.upgrade_container_name}
+{runtime_user_block}
     environment:
       - HOST={run_context.db_container_name}
       - POSTGRES_USER={run_context.postgres_user}
@@ -57,19 +151,20 @@ services:
     networks:
       - {run_context.network_name}
     volumes:
-      - ./output/filestore:/var/lib/odoo/filestore/{run_context.target_database}
-      - ./output:/var/log/odoo
+      - ./output/filestore:{self.CONTAINER_DATA_DIR}/filestore/{run_context.target_database}
+      - ./output:{self.CONTAINER_LOG_DIR}
     restart: "no"
     entrypoint: /entrypoint.sh
     command: >
       odoo -d {run_context.target_database}
+      --data-dir={self.CONTAINER_DATA_DIR}
       --upgrade-path=/mnt/extra-addons/openupgrade_scripts/scripts
       --addons-path=/mnt/extra-addons{extra_addons_path_arg}
       --update all
       --stop-after-init
       --load=base,web,openupgrade_framework
       --log-level=info
-      --logfile=/var/log/odoo/odoo.log
+      --logfile={self.CONTAINER_LOG_DIR}/odoo.log
 networks:
   {run_context.network_name}:
     external: true
@@ -91,6 +186,8 @@ networks:
         retry_backoff_seconds: float = 0.0,
         step_timeout_seconds: Optional[float] = None,
         runtime_env: Optional[dict] = None,
+        runtime_uid: Optional[int] = None,
+        runtime_gid: Optional[int] = None,
     ) -> bool:
         self.logger.info("Preparing upgrade step to version %s", target_version)
 
@@ -103,7 +200,15 @@ networks:
         )
 
         include_custom_addons = bool(extra_addons)
-        extra_addons_path_arg = ",/mnt/custom-addons" if include_custom_addons else ""
+        extra_addons_path_arg = ""
+        if include_custom_addons:
+            custom_addons_paths = self.discover_custom_addons_paths(custom_addons_dir)
+            if not custom_addons_paths:
+                raise UpgraderError(
+                    "No valid custom addons directories were discovered for --addons-path. "
+                    "Check extracted addons structure and manifest files."
+                )
+            extra_addons_path_arg = "," + ",".join(custom_addons_paths)
 
         if include_custom_addons:
             timestamp_path = os.path.join(custom_addons_dir, ".build_timestamp")
@@ -119,7 +224,12 @@ networks:
         with open("Dockerfile", "w", encoding="utf-8", newline="\n") as file_obj:
             file_obj.write(dockerfile_content)
 
-        compose_content = self.build_upgrade_compose(run_context, extra_addons_path_arg)
+        compose_content = self.build_upgrade_compose(
+            run_context=run_context,
+            extra_addons_path_arg=extra_addons_path_arg,
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
+        )
         with open("odoo-upgrade-composer.yml", "w", encoding="utf-8", newline="\n") as file_obj:
             file_obj.write(compose_content)
 
@@ -165,6 +275,13 @@ networks:
                     f"[bold magenta]Upgrading to {target_version} (attempt {attempt}/{max_attempts})...",
                     total=None,
                 )
+
+                log_offset = 0
+                if os.path.exists(self.LOG_PATH):
+                    try:
+                        log_offset = os.path.getsize(self.LOG_PATH)
+                    except OSError:
+                        log_offset = 0
 
                 try:
                     process = subprocess_module.Popen(
@@ -225,13 +342,36 @@ networks:
                     self.logger.error(
                         "Upgrade process returned non-zero exit code: %s", process.returncode
                     )
+                    attempt_log_delta = self._read_log_delta(self.LOG_PATH, log_offset)
+
                     if last_lines:
                         self.logger.error("Recent upgrade logs:\n%s", "\n".join(last_lines))
                         self.console.print("[red]Recent upgrade logs:[/red]")
                         for line in last_lines:
                             self.console.print(f"[red]{line}[/red]")
-                    if attempt == max_attempts:
+
+                    if attempt_log_delta:
+                        delta_lines = [line for line in attempt_log_delta.splitlines() if line.strip()]
+                        delta_excerpt = delta_lines[-40:]
+                        if delta_excerpt:
+                            self.logger.error("Recent odoo.log lines:\n%s", "\n".join(delta_excerpt))
+                            self.console.print("[red]Recent odoo.log lines:[/red]")
+                            for line in delta_excerpt:
+                                self.console.print(f"[red]{line}[/red]")
+
+                    evidence = "\n".join(last_lines)
+                    if attempt_log_delta:
+                        evidence = f"{evidence}\n{attempt_log_delta}" if evidence else attempt_log_delta
+
+                    should_retry = attempt < max_attempts and self._is_transient_failure(evidence)
+                    if not should_retry:
+                        if attempt < max_attempts:
+                            self.logger.error(
+                                "Non-transient upgrade failure detected. "
+                                "Skipping retry to avoid inconsistent migration state."
+                            )
                         return False
+
                     run_cmd(
                         compose_cmd + ["-f", "odoo-upgrade-composer.yml", "down"],
                         check=False,

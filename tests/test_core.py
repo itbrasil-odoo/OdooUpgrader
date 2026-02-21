@@ -221,6 +221,12 @@ def test_run_upgrade_step_uses_custom_addons_on_intermediate_steps(
 
     Path(upgrader.custom_addons_dir).mkdir(parents=True, exist_ok=True)
     Path(upgrader.custom_addons_dir, "requirements.txt").write_text("", encoding="utf-8")
+    module_path = Path(upgrader.custom_addons_dir, "OCA", "server-tools", "module_x")
+    module_path.mkdir(parents=True, exist_ok=True)
+    Path(module_path, "__manifest__.py").write_text(
+        "{'name': 'module_x', 'depends': ['base']}",
+        encoding="utf-8",
+    )
 
     def fake_run_cmd(cmd, check=True, capture_output=False):
         if "inspect" in cmd:
@@ -241,8 +247,29 @@ def test_run_upgrade_step_uses_custom_addons_on_intermediate_steps(
     assert upgrader.run_upgrade_step("15.0") is True
 
     compose_content = Path("odoo-upgrade-composer.yml").read_text(encoding="utf-8")
-    assert "--addons-path=/mnt/extra-addons,/mnt/custom-addons" in compose_content
+    assert "--addons-path=/mnt/extra-addons,/mnt/custom-addons/OCA/server-tools" in compose_content
     assert "--load=base,web,openupgrade_framework" in compose_content
+
+
+def test_run_upgrade_step_raises_when_service_reports_failure(
+    tmp_path,
+    monkeypatch,
+    patch_compose_detection,
+    local_source_file,
+):
+    upgrader = OdooUpgrader(source=str(local_source_file), target_version="16.0")
+
+    def fake_service_run_upgrade_step(**_kwargs):
+        return False
+
+    monkeypatch.setattr(
+        upgrader.upgrade_step_service,
+        "run_upgrade_step",
+        fake_service_run_upgrade_step,
+    )
+
+    with pytest.raises(UpgraderError, match="Upgrade step to 15.0 failed"):
+        upgrader.run_upgrade_step("15.0")
 
 
 def test_run_fails_when_upgrade_does_not_progress(
