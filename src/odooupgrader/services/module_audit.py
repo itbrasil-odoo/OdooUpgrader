@@ -192,11 +192,7 @@ class ModuleAuditService:
                 oca_pairs.append({"module": module_name, "repository": repository})
 
         oca_checks = self.check_oca_modules_target(oca_pairs, target_version)
-        oca_missing = [
-            item
-            for item in oca_checks
-            if item["exists"] is False and not item["error"]
-        ]
+        oca_missing = [item for item in oca_checks if item["exists"] is False and not item["error"]]
         oca_errors = [item for item in oca_checks if item["error"]]
 
         report: Dict[str, object] = {

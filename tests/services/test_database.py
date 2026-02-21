@@ -143,7 +143,9 @@ def test_restore_binary_dump_raises_actionable_error_on_pg_restore_version_misma
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     with pytest.raises(UpgraderError, match="--postgres-version"):
-        service.restore_database("DUMP", str(source_dir), str(filestore_dir), _context(), fake_run_cmd)
+        service.restore_database(
+            "DUMP", str(source_dir), str(filestore_dir), _context(), fake_run_cmd
+        )
 
 
 def test_prepare_filestore_structure_creates_parent_dirs_from_attachment_paths(tmp_path):

@@ -56,9 +56,10 @@ class DatabaseService:
         compat_dump_path = f"{source_dump_path}{self.SQL_COMPAT_FILE_SUFFIX}"
         removed_lines = 0
 
-        with open(source_dump_path, "r", encoding="utf-8", errors="ignore") as src_file, open(
-            compat_dump_path, "w", encoding="utf-8", newline="\n"
-        ) as dst_file:
+        with (
+            open(source_dump_path, "r", encoding="utf-8", errors="ignore") as src_file,
+            open(compat_dump_path, "w", encoding="utf-8", newline="\n") as dst_file,
+        ):
             for line in src_file:
                 should_skip = any(
                     self._line_sets_parameter(line, param)

@@ -119,9 +119,7 @@ class ValidationService:
             "or an HTTPS URL to a `.zip` file."
         )
 
-    def validate_addons_structure(
-        self, addons_path: Path, target_version: Optional[str] = None
-    ):
+    def validate_addons_structure(self, addons_path: Path, target_version: Optional[str] = None):
         if not addons_path.exists() or not addons_path.is_dir():
             raise UpgraderError(f"Extra addons directory not found: {addons_path}")
 

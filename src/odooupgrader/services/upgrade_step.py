@@ -13,8 +13,8 @@ class UpgradeStepService:
     """Builds/runs per-version OpenUpgrade container steps."""
 
     MANIFEST_FILES = ("__manifest__.py", "__openerp__.py")
-    CONTAINER_DATA_DIR = "/tmp/odooupgrader-data"
-    CONTAINER_LOG_DIR = "/tmp/odooupgrader-output"
+    CONTAINER_DATA_DIR = "/mnt/odooupgrader-data"
+    CONTAINER_LOG_DIR = "/mnt/odooupgrader-output"
     LOG_PATH = os.path.join("output", "odoo.log")
     TRANSIENT_FAILURE_PATTERNS = (
         "connection reset",
@@ -364,17 +364,23 @@ networks:
                             self.console.print(f"[red]{line}[/red]")
 
                     if attempt_log_delta:
-                        delta_lines = [line for line in attempt_log_delta.splitlines() if line.strip()]
+                        delta_lines = [
+                            line for line in attempt_log_delta.splitlines() if line.strip()
+                        ]
                         delta_excerpt = delta_lines[-40:]
                         if delta_excerpt:
-                            self.logger.error("Recent odoo.log lines:\n%s", "\n".join(delta_excerpt))
+                            self.logger.error(
+                                "Recent odoo.log lines:\n%s", "\n".join(delta_excerpt)
+                            )
                             self.console.print("[red]Recent odoo.log lines:[/red]")
                             for line in delta_excerpt:
                                 self.console.print(f"[red]{line}[/red]")
 
                     evidence = "\n".join(last_lines)
                     if attempt_log_delta:
-                        evidence = f"{evidence}\n{attempt_log_delta}" if evidence else attempt_log_delta
+                        evidence = (
+                            f"{evidence}\n{attempt_log_delta}" if evidence else attempt_log_delta
+                        )
 
                     should_retry = attempt < max_attempts and self._is_transient_failure(evidence)
                     if not should_retry:

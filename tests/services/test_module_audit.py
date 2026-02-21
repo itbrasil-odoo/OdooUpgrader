@@ -57,7 +57,9 @@ def test_discover_local_modules_handles_recursive_and_direct_addons(tmp_path):
         encoding="utf-8",
     )
 
-    service = ModuleAuditService(logger=DummyLogger(), console=DummyConsole(), requests_module=FakeRequests())
+    service = ModuleAuditService(
+        logger=DummyLogger(), console=DummyConsole(), requests_module=FakeRequests()
+    )
     discovered = service.discover_local_modules(
         [str(addons_root), str(direct_module)],
         recursive=True,
@@ -92,13 +94,13 @@ def test_run_audit_reports_missing_oca_modules(tmp_path):
 
     def fake_run_cmd(cmd, check=False, capture_output=False):  # noqa: ARG001
         stdout = (
-            "base|17.0|installed\n"
-            "module_ok|17.0|installed\n"
-            "module_missing|17.0|installed\n"
+            "base|17.0|installed\n" "module_ok|17.0|installed\n" "module_missing|17.0|installed\n"
         )
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
-    service = ModuleAuditService(logger=DummyLogger(), console=DummyConsole(), requests_module=FakeRequests())
+    service = ModuleAuditService(
+        logger=DummyLogger(), console=DummyConsole(), requests_module=FakeRequests()
+    )
     report_file = tmp_path / "report.json"
     report = service.run_audit(
         run_context=run_context,
