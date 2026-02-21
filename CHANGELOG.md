@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 - Improved upgrade runtime path handling for host-mounted filestore/log output.
 - Retry policy now avoids re-running non-transient migration failures to prevent state corruption.
 - Added target-version validation for local addon manifest versions (fails fast on mismatched branches).
+- Added deterministic fixture profile `base-db` for realistic OpenUpgrade integration scenarios.
+- Added optional manual CI job for full `14.0 -> 15.0` upgrade validation using `base-db` fixtures.
 
 ## [0.6.0] - 2026-02-21
 

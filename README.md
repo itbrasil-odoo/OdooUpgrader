@@ -195,6 +195,20 @@ output/
 └── run-state.json (when `--resume` is enabled)
 ```
 
+## Deterministic fixture profiles
+
+`scripts/fixtures/generate_fixture.sh` supports two profiles:
+
+- `minimal` (default): lightweight synthetic fixture for fast dry-run and validation checks.
+- `base-db`: boots a real Odoo 14 base database and exports dump/filestore for realistic upgrade integration tests.
+
+Examples:
+
+```bash
+./scripts/fixtures/generate_fixture.sh ./.fixtures minimal
+./scripts/fixtures/generate_fixture.sh ./.fixtures base-db
+```
+
 ## Security defaults
 
 - HTTP is blocked by default (`https://` required)
