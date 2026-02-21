@@ -190,7 +190,26 @@ MIT. See [LICENSE](LICENSE).
 
 ## Changelog
 
-### Version 0.3.0
+### Version 0.6.0
+
+- Added config-driven execution (`--config`) with precedence rules (CLI > config > defaults)
+- Added dry-run planning mode (`--dry-run`)
+- Added checkpoint/resume state handling (`--resume`, `--state-file`)
+- Added execution manifest (`output/run-manifest.json`)
+- Added runtime retry/timeout controls for reliability
+- Added OpenUpgrade source cache by version
+- Added security and quality automation (`ruff`, `mypy`, `bandit`, `pip-audit`, CodeQL)
+- Added release automation (`release-please`) and support matrix documentation
+
+### Version 0.5.0
+
+- Added resumable state and execution manifest
+- Added retry/timeout controls and deterministic integration fixtures
+- Added OpenUpgrade source cache optimization
+
+### Version 0.4.0
+
+- Added quality/security baseline and hardened addon manifest validation
 
 - Added secure ZIP extraction with traversal/symlink blocking
 - Added HTTPS-by-default policy and `--allow-insecure-http`

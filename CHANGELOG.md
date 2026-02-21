@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-02-21
+
+- Added configuration-file support (`--config`) with precedence rules.
+- Added dry-run execution planning (`--dry-run`).
+- Added actionable error catalog for operator-focused diagnostics.
+- Added release governance automation with release-please.
+- Added formal support matrix documentation for Community/Enterprise and OCA/custom scope.
+
+## [0.5.0] - 2026-02-21
+
+- Added checkpoint/resume runtime state (`--resume`, `--state-file`).
+- Added run execution manifest (`output/run-manifest.json`).
+- Added retry/timeout runtime controls for download and upgrade steps.
+- Added OpenUpgrade source cache by version for faster repeated runs.
+- Added deterministic integration fixtures and workflow coverage.
+
+## [0.4.0] - 2026-02-21
+
+- Added quality baseline with `ruff`, `mypy`, and `pre-commit`.
+- Added security workflow with `pip-audit`, `bandit`, and CodeQL.
+- Hardened addon validation with manifest structure and safe parsing checks.
+
 ## [0.3.0] - 2026-02-21
 
 - Security hardening for ZIP extraction and HTTPS policy.
