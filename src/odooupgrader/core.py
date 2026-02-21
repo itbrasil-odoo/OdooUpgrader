@@ -9,7 +9,6 @@ import time
 import uuid
 import zipfile
 from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Deque, List, Optional
 from urllib.parse import urlparse
@@ -26,34 +25,12 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from .constants import ADDONS_ZIP_EXTENSION, DIR_MODE, FILE_MODE, SCRIPT_MODE, SOURCE_EXTENSIONS
+from .errors import UpgraderError
+from .models import RunContext
+
 console = Console()
 logger = logging.getLogger("odooupgrader")
-
-SOURCE_EXTENSIONS = {".zip", ".dump"}
-ADDONS_ZIP_EXTENSION = ".zip"
-
-DIR_MODE = 0o755
-FILE_MODE = 0o644
-SCRIPT_MODE = 0o755
-
-
-class UpgraderError(RuntimeError):
-    """Raised when the upgrade cannot continue safely."""
-
-
-@dataclass(frozen=True)
-class RunContext:
-    """Runtime identifiers and credentials isolated per execution."""
-
-    run_id: str
-    db_container_name: str
-    upgrade_container_name: str
-    network_name: str
-    volume_name: str
-    postgres_user: str
-    postgres_password: str
-    postgres_bootstrap_db: str
-    target_database: str
 
 
 class OdooUpgrader:
