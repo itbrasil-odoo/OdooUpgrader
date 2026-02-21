@@ -2,7 +2,7 @@
 
 import subprocess  # nosec B404
 import time
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from odooupgrader.errors import UpgraderError
 
@@ -23,6 +23,7 @@ class CommandRunner:
         retry_count: int = 0,
         retry_backoff_seconds: float = 0.0,
         retry_on_returncodes: Optional[Iterable[int]] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> subprocess.CompletedProcess:
         cmd_str = " ".join(cmd)
         self.logger.debug("Executing: %s", cmd_str)
@@ -38,6 +39,7 @@ class CommandRunner:
                     text=True,
                     capture_output=capture_output,
                     timeout=effective_timeout,
+                    env=env,
                 )
             except FileNotFoundError as exc:
                 raise UpgraderError(

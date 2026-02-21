@@ -123,6 +123,8 @@ class OdooUpgrader:
 
         self.compose_cmd = self._get_docker_compose_cmd()
         self.run_context = self._build_run_context()
+        self.runtime_env = os.environ.copy()
+        self.runtime_env["ODOOUPGRADER_POSTGRES_PASSWORD"] = self.run_context.postgres_password
 
     def _normalize_sha256(self, value: Optional[str], option_name: str) -> Optional[str]:
         if value is None:
@@ -190,6 +192,7 @@ class OdooUpgrader:
                     "State file is missing run context. Start a fresh run without --resume."
                 )
             self.run_context = RunContext(**context_data)
+            self.runtime_env["ODOOUPGRADER_POSTGRES_PASSWORD"] = self.run_context.postgres_password
             logger.info(
                 "Resuming previous run '%s' at step '%s'.",
                 self.run_context.run_id,
@@ -252,11 +255,15 @@ class OdooUpgrader:
         timeout: Optional[float] = None,
         retry_count: Optional[int] = None,
         retry_backoff_seconds: Optional[float] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> subprocess.CompletedProcess:
         effective_retry_count = self.retry_count if retry_count is None else retry_count
         effective_backoff = (
             self.retry_backoff_seconds if retry_backoff_seconds is None else retry_backoff_seconds
         )
+        effective_env = self.runtime_env.copy()
+        if env:
+            effective_env.update(env)
         return self.command_runner.run(
             cmd,
             check=check,
@@ -264,6 +271,7 @@ class OdooUpgrader:
             timeout=timeout,
             retry_count=effective_retry_count,
             retry_backoff_seconds=effective_backoff,
+            env=effective_env,
         )
 
     def _get_docker_compose_cmd(self) -> List[str]:
@@ -577,6 +585,7 @@ class OdooUpgrader:
             retry_count=self.retry_count,
             retry_backoff_seconds=self.retry_backoff_seconds,
             step_timeout_seconds=float(self.step_timeout_minutes) * 60.0,
+            runtime_env=self.runtime_env,
         )
 
     def finalize_package(self):

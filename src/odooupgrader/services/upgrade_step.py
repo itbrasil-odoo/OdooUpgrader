@@ -53,7 +53,7 @@ services:
     environment:
       - HOST={run_context.db_container_name}
       - POSTGRES_USER={run_context.postgres_user}
-      - POSTGRES_PASSWORD={run_context.postgres_password}
+      - POSTGRES_PASSWORD=${{ODOOUPGRADER_POSTGRES_PASSWORD}}
     networks:
       - {run_context.network_name}
     volumes:
@@ -90,6 +90,7 @@ networks:
         retry_count: int = 0,
         retry_backoff_seconds: float = 0.0,
         step_timeout_seconds: Optional[float] = None,
+        runtime_env: Optional[dict] = None,
     ) -> bool:
         self.logger.info("Preparing upgrade step to version %s", target_version)
 
@@ -173,6 +174,7 @@ networks:
                         text=True,
                         bufsize=1,
                         universal_newlines=True,
+                        env=runtime_env,
                     )
                 except Exception as exc:
                     raise UpgraderError(f"Failed to start upgrade container: {exc}") from exc

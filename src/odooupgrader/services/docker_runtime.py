@@ -45,7 +45,7 @@ services:
     image: postgres:{postgres_version}
     environment:
       - POSTGRES_DB={run_context.postgres_bootstrap_db}
-      - POSTGRES_PASSWORD={run_context.postgres_password}
+      - POSTGRES_PASSWORD=${{ODOOUPGRADER_POSTGRES_PASSWORD}}
       - POSTGRES_USER={run_context.postgres_user}
     networks:
       - {run_context.network_name}
