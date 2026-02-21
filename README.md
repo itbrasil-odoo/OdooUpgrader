@@ -203,6 +203,7 @@ output/
 - Temporary Docker credentials are generated per execution
 - Docker runtime names are generated per execution (collision-safe)
 - Addon manifests are validated with safe parsing rules
+- Local addon manifest versions are checked against target major/minor compatibility
 
 ## Supported versions
 
@@ -211,6 +212,7 @@ Odoo 10.0 through 18.0, aligned with OpenUpgrade availability.
 ## Operational notes
 
 - If module audit reports OCA modules missing in the target branch, plan replacement/porting before migration.
+- If local extra addons use `17.0.*` manifest versions, they must be migrated/switched before targeting `18.0`.
 - For dumps created with newer PostgreSQL client versions, use `--postgres-version` accordingly.
 - SQL restore retries include compatibility stripping for unsupported PostgreSQL `SET` directives.
 - Upgrade image build supports pip installs under externally-managed Python environments (PEP 668).
