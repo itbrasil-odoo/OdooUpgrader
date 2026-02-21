@@ -13,6 +13,7 @@ Professional command-line tool for automating Odoo database upgrades using [OCA 
 - Runtime-isolated Docker resources (unique network/container/volume per execution)
 - Streamed download progress with optional SHA-256 verification
 - Hardened ZIP extraction (path traversal and symlink protections)
+- Optional module audit for installed modules + OCA target-version availability
 - Rich CLI output and optional log file
 
 ## Requirements
@@ -102,6 +103,33 @@ odooupgrader \
   --dry-run
 ```
 
+### Module audit before migration
+
+```bash
+odooupgrader \
+  --source ./database.dump \
+  --version 18.0 \
+  --extra-addons ./extra_addons \
+  --analyze-modules \
+  --analyze-modules-only \
+  --module-audit-file ./output/module-audit.json
+```
+
+### PostgreSQL dump compatibility
+
+If your SQL or binary dump was produced by a newer PostgreSQL toolchain, run with a compatible
+database image:
+
+```bash
+odooupgrader \
+  --source ./database.dump \
+  --version 18.0 \
+  --postgres-version 17
+```
+
+For SQL dumps (`dump.sql`), OdooUpgrader also retries automatically by stripping unsupported
+`SET` parameters when possible.
+
 ### Configuration file usage
 
 ```bash
@@ -129,6 +157,10 @@ odooupgrader --config .odooupgrader.yml --source ./override.dump
 | `--step-timeout-minutes` | ❌ | Timeout per OpenUpgrade step |
 | `--config` | ❌ | YAML config file (`.odooupgrader.yml`) |
 | `--dry-run` | ❌ | Validate inputs and print upgrade plan without running Docker |
+| `--analyze-modules` | ❌ | Audit installed modules and check OCA module existence on target version |
+| `--analyze-modules-only` | ❌ | Stop after module audit without running upgrade steps |
+| `--strict-module-audit` | ❌ | Fail run when module audit finds missing OCA modules/check errors |
+| `--module-audit-file` | ❌ | Output path for module audit JSON report |
 
 ## How it works
 
@@ -158,8 +190,23 @@ See `docs/architecture.md` for the full responsibility map and flow.
 output/
 ├── upgraded.zip
 ├── odoo.log
+├── module-audit.json (when `--analyze-modules` is enabled)
 ├── run-manifest.json
 └── run-state.json (when `--resume` is enabled)
+```
+
+## Deterministic fixture profiles
+
+`scripts/fixtures/generate_fixture.sh` supports two profiles:
+
+- `minimal` (default): lightweight synthetic fixture for fast dry-run and validation checks.
+- `base-db`: boots a real Odoo 14 base database and exports dump/filestore for realistic upgrade integration tests.
+
+Examples:
+
+```bash
+./scripts/fixtures/generate_fixture.sh ./.fixtures minimal
+./scripts/fixtures/generate_fixture.sh ./.fixtures base-db
 ```
 
 ## Security defaults
@@ -170,10 +217,19 @@ output/
 - Temporary Docker credentials are generated per execution
 - Docker runtime names are generated per execution (collision-safe)
 - Addon manifests are validated with safe parsing rules
+- Local addon manifest versions are checked against target major/minor compatibility
 
 ## Supported versions
 
 Odoo 10.0 through 18.0, aligned with OpenUpgrade availability.
+
+## Operational notes
+
+- If module audit reports OCA modules missing in the target branch, plan replacement/porting before migration.
+- If local extra addons use `17.0.*` manifest versions, they must be migrated/switched before targeting `18.0`.
+- For dumps created with newer PostgreSQL client versions, use `--postgres-version` accordingly.
+- SQL restore retries include compatibility stripping for unsupported PostgreSQL `SET` directives.
+- Upgrade image build supports pip installs under externally-managed Python environments (PEP 668).
 
 ## Contributing
 

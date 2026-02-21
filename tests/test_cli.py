@@ -34,6 +34,7 @@ def test_cli_uses_config_and_allows_cli_override(tmp_path, monkeypatch):
             "--retry-count",
             "5",
             "--dry-run",
+            "--analyze-modules-only",
         ],
     )
 
@@ -43,6 +44,7 @@ def test_cli_uses_config_and_allows_cli_override(tmp_path, monkeypatch):
     assert captured["retry_count"] == 5
     assert captured["download_timeout"] == 45.0
     assert captured["dry_run"] is True
+    assert captured["analyze_modules_only"] is True
 
 
 def test_cli_uses_default_config_file_when_present(tmp_path, monkeypatch):

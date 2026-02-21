@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-02-21
+
+- Added recursive addon discovery for nested addon layouts (including OCA-style repository trees).
+- Added module preflight audit (`--analyze-modules`, `--analyze-modules-only`) with OCA target-branch checks.
+- Added strict audit mode and JSON report output controls (`--strict-module-audit`, `--module-audit-file`).
+- Improved SQL restore resilience by retrying with compatibility-stripped unsupported PostgreSQL `SET` directives.
+- Added actionable binary dump restore guidance for PostgreSQL version mismatch (`--postgres-version`).
+- Added PEP 668-compatible dependency installation during OpenUpgrade image build.
+- Added pre-upgrade filestore checklist preparation to avoid attachment GC path failures.
+- Improved upgrade runtime path handling for host-mounted filestore/log output.
+- Retry policy now avoids re-running non-transient migration failures to prevent state corruption.
+- Added target-version validation for local addon manifest versions (fails fast on mismatched branches).
+- Added deterministic fixture profile `base-db` for realistic OpenUpgrade integration scenarios.
+- Added optional manual CI job for full `14.0 -> 15.0` upgrade validation using `base-db` fixtures.
+
 ## [0.6.0] - 2026-02-21
 
 - Added configuration-file support (`--config`) with precedence rules.

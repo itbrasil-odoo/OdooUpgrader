@@ -161,4 +161,17 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
-output/run-manifest.json
+output/
+source/
+
+# Runtime-generated upgrade artifacts
+Dockerfile
+db-composer.yml
+odoo-upgrade-composer.yml
+
+# Local uv lockfile (not part of project packaging workflow)
+uv.lock
+
+# Local deterministic fixture workspace (generated during manual integration tests)
+.fixtures-local/
+.fixtures-local*/
