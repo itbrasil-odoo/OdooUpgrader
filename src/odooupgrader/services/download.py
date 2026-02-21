@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -21,11 +22,23 @@ from odooupgrader.errors import UpgraderError
 class DownloadService:
     """Handles remote download logic and source retrieval."""
 
-    def __init__(self, validation_service, logger, console, requests_module):
+    def __init__(
+        self,
+        validation_service,
+        logger,
+        console,
+        requests_module,
+        download_timeout: float = 60.0,
+        retry_count: int = 0,
+        retry_backoff_seconds: float = 0.0,
+    ):
         self.validation_service = validation_service
         self.logger = logger
         self.console = console
         self.requests = requests_module
+        self.download_timeout = download_timeout
+        self.retry_count = retry_count
+        self.retry_backoff_seconds = retry_backoff_seconds
 
     def download_file(
         self,
@@ -33,52 +46,79 @@ class DownloadService:
         dest_path: str,
         description: str = "Downloading...",
         expected_sha256: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
+        retry_count: Optional[int] = None,
+        retry_backoff_seconds: Optional[float] = None,
     ):
         self.logger.info("Downloading %s to %s", url, dest_path)
         self.validation_service.enforce_https_policy(url, description, self.logger, self.console)
 
-        hasher = hashlib.sha256() if expected_sha256 else None
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self.download_timeout
+        effective_retry_count = retry_count if retry_count is not None else self.retry_count
+        effective_backoff = (
+            retry_backoff_seconds
+            if retry_backoff_seconds is not None
+            else self.retry_backoff_seconds
+        )
+        max_attempts = max(1, effective_retry_count + 1)
 
-        try:
-            with self.requests.get(url, stream=True, timeout=60) as response:
-                response.raise_for_status()
-                total_size = int(response.headers.get("Content-Length", 0))
+        for attempt in range(1, max_attempts + 1):
+            hasher = hashlib.sha256() if expected_sha256 else None
 
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            try:
+                with self.requests.get(url, stream=True, timeout=effective_timeout) as response:
+                    response.raise_for_status()
+                    total_size = int(response.headers.get("Content-Length", 0))
 
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    TaskProgressColumn(),
-                    "•",
-                    TimeElapsedColumn(),
-                    console=self.console,
-                ) as progress:
-                    task = progress.add_task(f"[cyan]{description}", total=total_size or None)
-                    with open(dest_path, "wb") as file_obj:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if not chunk:
-                                continue
-                            file_obj.write(chunk)
-                            if hasher:
-                                hasher.update(chunk)
-                            progress.update(task, advance=len(chunk))
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-            if hasher:
-                downloaded_sha = hasher.hexdigest()
-                if downloaded_sha != expected_sha256:
-                    try:
-                        os.remove(dest_path)
-                    except OSError:
-                        pass
-                    raise UpgraderError(
-                        f"Checksum mismatch for {description}. Expected {expected_sha256}, "
-                        f"but got {downloaded_sha}."
+                    with Progress(
+                        SpinnerColumn(),
+                        TextColumn("[progress.description]{task.description}"),
+                        BarColumn(),
+                        TaskProgressColumn(),
+                        "•",
+                        TimeElapsedColumn(),
+                        console=self.console,
+                    ) as progress:
+                        task = progress.add_task(f"[cyan]{description}", total=total_size or None)
+                        with open(dest_path, "wb") as file_obj:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if not chunk:
+                                    continue
+                                file_obj.write(chunk)
+                                if hasher:
+                                    hasher.update(chunk)
+                                progress.update(task, advance=len(chunk))
+
+                if hasher:
+                    downloaded_sha = hasher.hexdigest()
+                    if downloaded_sha != expected_sha256:
+                        try:
+                            os.remove(dest_path)
+                        except OSError:
+                            pass
+                        raise UpgraderError(
+                            f"Checksum mismatch for {description}. Expected {expected_sha256}, "
+                            f"but got {downloaded_sha}."
+                        )
+
+                return
+            except UpgraderError:
+                raise
+            except self.requests.RequestException as exc:
+                if attempt < max_attempts:
+                    self.logger.warning(
+                        "Download attempt %s/%s failed for %s. Retrying in %.1fs: %s",
+                        attempt,
+                        max_attempts,
+                        description,
+                        effective_backoff,
+                        exc,
                     )
-
-        except self.requests.RequestException as exc:
-            raise UpgraderError(f"Download failed for {description}: {exc}") from exc
+                    time.sleep(effective_backoff)
+                    continue
+                raise UpgraderError(f"Download failed for {description}: {exc}") from exc
 
     def download_or_copy_source(self, source: str, source_dir: str, source_sha256: Optional[str]) -> str:
         if self.validation_service.is_url(source):

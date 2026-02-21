@@ -1,3 +1,8 @@
+import io
+import subprocess
+
+from rich.console import Console
+
 from odooupgrader.models import RunContext
 from odooupgrader.services.upgrade_step import UpgradeStepService
 
@@ -10,6 +15,9 @@ class DummyLogger:
         return None
 
     def error(self, *_args, **_kwargs):
+        return None
+
+    def warning(self, *_args, **_kwargs):
         return None
 
 
@@ -50,3 +58,51 @@ def test_build_upgrade_compose_uses_dynamic_runtime_names():
     assert "- HOST=db_name" in compose
     assert "--addons-path=/mnt/extra-addons,/mnt/custom-addons" in compose
     assert "name: net_name" in compose
+
+
+def test_run_upgrade_step_respects_timeout(monkeypatch, tmp_path):
+    service = UpgradeStepService(logger=DummyLogger(), console=Console(record=True))
+    context = _build_context()
+    monkeypatch.chdir(tmp_path)
+
+    def fake_run_cmd(_cmd, **_kwargs):
+        return subprocess.CompletedProcess(_cmd, 0, stdout="0\n", stderr="")
+
+    class FakePopen:
+        def __init__(self, *_args, **_kwargs):
+            self.stdout = io.StringIO("line1\nline2\n")
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            self.returncode = 1
+
+        def kill(self):
+            self.returncode = 1
+
+    class FakeSubprocessModule:
+        PIPE = object()
+        STDOUT = object()
+        Popen = FakePopen
+
+    monotonic_values = iter([0.0, 999.0, 999.0])
+    monkeypatch.setattr("odooupgrader.services.upgrade_step.time.monotonic", lambda: next(monotonic_values))
+
+    result = service.run_upgrade_step(
+        target_version="15.0",
+        run_context=context,
+        compose_cmd=["docker", "compose"],
+        extra_addons=None,
+        custom_addons_dir=str(tmp_path / "custom_addons"),
+        run_cmd=fake_run_cmd,
+        verbose=False,
+        subprocess_module=FakeSubprocessModule,
+        cache_root=str(tmp_path / ".cache" / "openupgrade"),
+        retry_count=0,
+        retry_backoff_seconds=0.0,
+        step_timeout_seconds=0.1,
+    )
+
+    assert result is False

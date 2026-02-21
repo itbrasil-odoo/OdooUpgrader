@@ -60,6 +60,38 @@ logging.basicConfig(
     type=click.Path(),
     help="Path to the run state file (default: output/run-state.json).",
 )
+@click.option(
+    "--download-timeout",
+    required=False,
+    type=float,
+    default=60.0,
+    show_default=True,
+    help="HTTP download timeout in seconds.",
+)
+@click.option(
+    "--retry-count",
+    required=False,
+    type=int,
+    default=1,
+    show_default=True,
+    help="Number of retries for transient runtime/download failures.",
+)
+@click.option(
+    "--retry-backoff-seconds",
+    required=False,
+    type=float,
+    default=2.0,
+    show_default=True,
+    help="Backoff time in seconds between retries.",
+)
+@click.option(
+    "--step-timeout-minutes",
+    required=False,
+    type=int,
+    default=120,
+    show_default=True,
+    help="Timeout for each OpenUpgrade step in minutes.",
+)
 def main(
     source,
     version,
@@ -72,6 +104,10 @@ def main(
     extra_addons_sha256,
     resume,
     state_file,
+    download_timeout,
+    retry_count,
+    retry_backoff_seconds,
+    step_timeout_minutes,
 ):
     """Automate incremental Odoo database upgrades using OpenUpgrade."""
     logger = logging.getLogger("odooupgrader")
@@ -100,6 +136,10 @@ def main(
             extra_addons_sha256=extra_addons_sha256,
             resume=resume,
             state_file=state_file,
+            download_timeout=download_timeout,
+            retry_count=retry_count,
+            retry_backoff_seconds=retry_backoff_seconds,
+            step_timeout_minutes=step_timeout_minutes,
         )
     except UpgraderError as exc:
         raise click.ClickException(str(exc)) from exc

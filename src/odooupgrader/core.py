@@ -46,6 +46,10 @@ class OdooUpgrader:
         extra_addons_sha256: Optional[str] = None,
         resume: bool = False,
         state_file: Optional[str] = None,
+        download_timeout: float = 60.0,
+        retry_count: int = 1,
+        retry_backoff_seconds: float = 2.0,
+        step_timeout_minutes: int = 120,
     ):
         self.source = source
         self.target_version = target_version
@@ -59,6 +63,18 @@ class OdooUpgrader:
             "--extra-addons-sha256",
         )
         self.resume = resume
+        self.download_timeout = download_timeout
+        self.retry_count = retry_count
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self.step_timeout_minutes = step_timeout_minutes
+        if self.download_timeout <= 0:
+            raise UpgraderError("--download-timeout must be greater than zero.")
+        if self.retry_count < 0:
+            raise UpgraderError("--retry-count cannot be negative.")
+        if self.retry_backoff_seconds < 0:
+            raise UpgraderError("--retry-backoff-seconds cannot be negative.")
+        if self.step_timeout_minutes <= 0:
+            raise UpgraderError("--step-timeout-minutes must be greater than zero.")
 
         self.cwd = os.getcwd()
         self.source_dir = os.path.join(self.cwd, "source")
@@ -84,6 +100,9 @@ class OdooUpgrader:
             logger=logger,
             console=console,
             requests_module=requests,
+            download_timeout=self.download_timeout,
+            retry_count=self.retry_count,
+            retry_backoff_seconds=self.retry_backoff_seconds,
         )
         self.docker_runtime_service = DockerRuntimeService(
             logger=logger,
@@ -222,8 +241,24 @@ class OdooUpgrader:
         cmd: List[str],
         check: bool = True,
         capture_output: bool = False,
+        timeout: Optional[float] = None,
+        retry_count: Optional[int] = None,
+        retry_backoff_seconds: Optional[float] = None,
     ) -> subprocess.CompletedProcess:
-        return self.command_runner.run(cmd, check=check, capture_output=capture_output)
+        effective_retry_count = self.retry_count if retry_count is None else retry_count
+        effective_backoff = (
+            self.retry_backoff_seconds
+            if retry_backoff_seconds is None
+            else retry_backoff_seconds
+        )
+        return self.command_runner.run(
+            cmd,
+            check=check,
+            capture_output=capture_output,
+            timeout=timeout,
+            retry_count=effective_retry_count,
+            retry_backoff_seconds=effective_backoff,
+        )
 
     def _get_docker_compose_cmd(self) -> List[str]:
         return self.docker_runtime_service.get_docker_compose_cmd()
@@ -279,6 +314,9 @@ class OdooUpgrader:
             dest_path=dest_path,
             description=description,
             expected_sha256=expected_sha256,
+            timeout_seconds=self.download_timeout,
+            retry_count=self.retry_count,
+            retry_backoff_seconds=self.retry_backoff_seconds,
         )
 
     def download_or_copy_source(self) -> str:
@@ -457,6 +495,9 @@ class OdooUpgrader:
             verbose=self.verbose,
             subprocess_module=subprocess,
             cache_root=os.path.join(self.output_dir, ".cache", "openupgrade"),
+            retry_count=self.retry_count,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+            step_timeout_seconds=float(self.step_timeout_minutes) * 60.0,
         )
 
     def finalize_package(self):
