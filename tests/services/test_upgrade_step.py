@@ -50,6 +50,20 @@ def test_build_upgrade_dockerfile_includes_custom_addons_section():
     assert "COPY --chown=odoo:odoo ./output/custom_addons/ /mnt/custom-addons/" in dockerfile
 
 
+def test_build_upgrade_dockerfile_adds_runtime_uid_mapping_when_provided():
+    service = UpgradeStepService(logger=DummyLogger(), console=DummyConsole())
+
+    dockerfile = service.build_upgrade_dockerfile(
+        "15.0",
+        include_custom_addons=False,
+        runtime_uid=1000,
+        runtime_gid=1000,
+    )
+
+    assert "groupadd -g 1000 odooupgraderhost" in dockerfile
+    assert "useradd -u 1000 -g 1000" in dockerfile
+
+
 def test_build_upgrade_compose_uses_dynamic_runtime_names():
     service = UpgradeStepService(logger=DummyLogger(), console=DummyConsole())
 

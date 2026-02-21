@@ -50,7 +50,16 @@ class UpgradeStepService:
         target_version: str,
         include_custom_addons: bool,
         openupgrade_cache_relpath: str = "output/.cache/openupgrade/current",
+        runtime_uid: Optional[int] = None,
+        runtime_gid: Optional[int] = None,
     ) -> str:
+        runtime_user_mapping_section = ""
+        if runtime_uid is not None and runtime_gid is not None:
+            runtime_user_mapping_section = f"""
+RUN if ! getent group {runtime_gid} > /dev/null; then groupadd -g {runtime_gid} odooupgraderhost; fi \
+ && if ! getent passwd {runtime_uid} > /dev/null; then useradd -u {runtime_uid} -g {runtime_gid} -M -s /usr/sbin/nologin odooupgraderhost; fi
+"""
+
         custom_addons_section = ""
         if include_custom_addons:
             custom_addons_section = """
@@ -66,6 +75,8 @@ USER root
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 COPY --chown=odoo:odoo ./{openupgrade_cache_relpath}/ /mnt/extra-addons/
 RUN pip3 install --no-cache-dir -r /mnt/extra-addons/requirements.txt
+
+{runtime_user_mapping_section}
 
 {custom_addons_section}
 
@@ -220,6 +231,8 @@ networks:
             target_version=target_version,
             include_custom_addons=include_custom_addons,
             openupgrade_cache_relpath=openupgrade_cache_relpath,
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
         )
         with open("Dockerfile", "w", encoding="utf-8", newline="\n") as file_obj:
             file_obj.write(dockerfile_content)
