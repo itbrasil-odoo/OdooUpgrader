@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odooupgrader"
-version = "0.2.0"
+version = "0.3.0"
 description = "Docker-based Odoo database migration tool using OpenUpgrade framework"
 authors = [{name = "Fasil", email = "fasilwdr@hotmail.com"}]
 readme = "README.md"
@@ -38,10 +38,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/fasilwdr/OdooUpgrader"
-Repository = "https://github.com/fasilwdr/OdooUpgrader"
-Documentation = "https://github.com/fasilwdr/OdooUpgrader#readme"
-Issues = "https://github.com/fasilwdr/OdooUpgrader/issues"
+Homepage = "https://github.com/itbrasil-odoo/OdooUpgrader"
+Repository = "https://github.com/itbrasil-odoo/OdooUpgrader"
+Documentation = "https://github.com/itbrasil-odoo/OdooUpgrader#readme"
+Issues = "https://github.com/itbrasil-odoo/OdooUpgrader/issues"
 
 [project.scripts]
 odooupgrader = "odooupgrader.cli:main"
