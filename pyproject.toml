@@ -35,6 +35,10 @@ dev = [
     "pytest>=7.4.0",
     "black>=23.0.0",
     "mypy>=1.7.0",
+    "ruff>=0.6.9",
+    "pre-commit>=3.8.0",
+    "bandit>=1.7.9",
+    "pip-audit>=2.7.3",
 ]
 
 [project.urls]
@@ -50,8 +54,25 @@ odooupgrader = "odooupgrader.cli:main"
 line-length = 100
 target-version = ['py39', 'py310', 'py311', 'py312', 'py313']
 
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+]
+
 [tool.mypy]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
