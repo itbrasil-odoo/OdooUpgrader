@@ -49,6 +49,17 @@ logging.basicConfig(
     required=False,
     help="Expected SHA-256 checksum for the extra addons download (remote addons only).",
 )
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Resume a previously interrupted run using the execution state file.",
+)
+@click.option(
+    "--state-file",
+    required=False,
+    type=click.Path(),
+    help="Path to the run state file (default: output/run-state.json).",
+)
 def main(
     source,
     version,
@@ -59,6 +70,8 @@ def main(
     allow_insecure_http,
     source_sha256,
     extra_addons_sha256,
+    resume,
+    state_file,
 ):
     """Automate incremental Odoo database upgrades using OpenUpgrade."""
     logger = logging.getLogger("odooupgrader")
@@ -85,6 +98,8 @@ def main(
             allow_insecure_http=allow_insecure_http,
             source_sha256=source_sha256,
             extra_addons_sha256=extra_addons_sha256,
+            resume=resume,
+            state_file=state_file,
         )
     except UpgraderError as exc:
         raise click.ClickException(str(exc)) from exc

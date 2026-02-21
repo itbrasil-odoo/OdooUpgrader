@@ -5,8 +5,9 @@ import shutil
 import subprocess
 import sys
 import uuid
+from dataclasses import asdict
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from packaging import version
@@ -21,6 +22,7 @@ from .services.database import DatabaseService
 from .services.download import DownloadService
 from .services.docker_runtime import DockerRuntimeService
 from .services.filesystem import FileSystemService
+from .services.state import StateService
 from .services.upgrade_step import UpgradeStepService
 from .services.validation import ValidationService
 
@@ -41,6 +43,8 @@ class OdooUpgrader:
         allow_insecure_http: bool = False,
         source_sha256: Optional[str] = None,
         extra_addons_sha256: Optional[str] = None,
+        resume: bool = False,
+        state_file: Optional[str] = None,
     ):
         self.source = source
         self.target_version = target_version
@@ -53,12 +57,17 @@ class OdooUpgrader:
             extra_addons_sha256,
             "--extra-addons-sha256",
         )
+        self.resume = resume
 
         self.cwd = os.getcwd()
         self.source_dir = os.path.join(self.cwd, "source")
         self.output_dir = os.path.join(self.cwd, "output")
         self.filestore_dir = os.path.join(self.output_dir, "filestore")
         self.custom_addons_dir = os.path.join(self.output_dir, "custom_addons")
+        self.state_file = state_file or os.path.join(self.output_dir, "run-state.json")
+        self.state_service = StateService(state_file=self.state_file, logger=logger)
+        self.state: Optional[Dict[str, Any]] = None
+        self.current_step_name: Optional[str] = None
 
         self.filesystem_service = FileSystemService(logger=logger, console=console)
         self.archive_service = ArchiveService()
@@ -113,6 +122,82 @@ class OdooUpgrader:
             postgres_bootstrap_db="odoo",
             target_database="database",
         )
+
+    def _build_resume_metadata(self) -> Dict[str, Any]:
+        return {
+            "source": self.source,
+            "target_version": self.target_version,
+            "extra_addons": self.extra_addons,
+            "source_sha256": self.source_sha256,
+            "extra_addons_sha256": self.extra_addons_sha256,
+        }
+
+    def _initialize_state(self) -> bool:
+        if not self.resume:
+            return False
+
+        os.makedirs(self.output_dir, exist_ok=True)
+        metadata = self._build_resume_metadata()
+        state, resumed = self.state_service.initialize(
+            metadata=metadata,
+            run_context=asdict(self.run_context),
+            resume=True,
+        )
+        self.state = state
+
+        if resumed:
+            context_data = state.get("run_context")
+            if not isinstance(context_data, dict):
+                raise UpgraderError("State file is missing run context. Start a fresh run without --resume.")
+            self.run_context = RunContext(**context_data)
+            logger.info(
+                "Resuming previous run '%s' at step '%s'.",
+                self.run_context.run_id,
+                state.get("current_step") or "<none>",
+            )
+            if state.get("status") == "success":
+                raise UpgraderError(
+                    "The state file already belongs to a successful run. Remove it or choose another --state-file."
+                )
+            state["status"] = "running"
+            self.state_service.save(state)
+        else:
+            logger.info("Resume state initialized at %s", self.state_file)
+
+        return resumed
+
+    def _run_step(
+        self,
+        name: str,
+        callback,
+        *args,
+        skip_when_completed: bool = True,
+        **kwargs,
+    ):
+        if (
+            self.resume
+            and self.state
+            and skip_when_completed
+            and self.state_service.is_step_completed(self.state, name)
+        ):
+            logger.info("Skipping completed step from state: %s", name)
+            return None, True
+
+        if self.state:
+            self.state_service.mark_step_started(self.state, name)
+        self.current_step_name = name
+
+        try:
+            result = callback(*args, **kwargs)
+        except Exception as exc:
+            if self.state:
+                self.state_service.mark_step_failed(self.state, name, str(exc))
+            raise
+
+        if self.state:
+            self.state_service.mark_step_completed(self.state, name)
+        self.current_step_name = None
+        return result, False
 
     def _run_cmd(
         self,
@@ -328,9 +413,13 @@ class OdooUpgrader:
             return f"{parsed.major + 1}.0"
 
     def _build_upgrade_dockerfile(self, target_version: str, include_custom_addons: bool) -> str:
+        openupgrade_cache_relpath = os.path.join(
+            "output", ".cache", "openupgrade", target_version
+        ).replace(os.sep, "/")
         return self.upgrade_step_service.build_upgrade_dockerfile(
             target_version=target_version,
             include_custom_addons=include_custom_addons,
+            openupgrade_cache_relpath=openupgrade_cache_relpath,
         )
 
     def _build_upgrade_compose(self, extra_addons_path_arg: str) -> str:
@@ -349,6 +438,7 @@ class OdooUpgrader:
             run_cmd=self._run_cmd,
             verbose=self.verbose,
             subprocess_module=subprocess,
+            cache_root=os.path.join(self.output_dir, ".cache", "openupgrade"),
         )
 
     def finalize_package(self):
@@ -376,26 +466,66 @@ class OdooUpgrader:
                     logger.warning("Could not remove %s: %s", file_name, exc)
 
     def run(self) -> int:
+        exit_code = 1
+        preserve_runtime_for_resume = False
+
         try:
             logger.info("Starting OdooUpgrader...")
 
             if self.target_version not in self.VALID_VERSIONS:
                 raise UpgraderError(f"Invalid version. Supported versions: {', '.join(self.VALID_VERSIONS)}")
 
-            self.validate_docker_environment()
-            self.validate_source_accessibility()
-            self.prepare_environment()
-            self.process_extra_addons()
+            resumed = self._initialize_state()
 
-            self.create_db_compose_file()
-            self._run_cmd(self.compose_cmd + ["-f", "db-composer.yml", "up", "-d"], check=True)
-            self.wait_for_db()
+            self._run_step("validate_docker_environment", self.validate_docker_environment)
+            self._run_step("validate_source_accessibility", self.validate_source_accessibility)
 
-            local_source = self.download_or_copy_source()
-            file_type = self.process_source_file(local_source)
-            self.restore_database(file_type)
+            database_restored = False
+            current_ver_str = ""
 
-            current_ver_str = self.get_current_version()
+            if self.resume and self.state:
+                database_restored = bool(self.state_service.get_value(self.state, "database_restored", False))
+                current_ver_str = self.state_service.get_current_version(self.state) or ""
+
+            if not (resumed and database_restored):
+                self._run_step("prepare_environment", self.prepare_environment)
+                self._run_step("process_extra_addons", self.process_extra_addons)
+            else:
+                logger.info("Skipping environment preparation due to resume state.")
+
+            self._run_step("create_db_compose_file", self.create_db_compose_file, skip_when_completed=False)
+            self._run_step(
+                "start_db_container",
+                self._run_cmd,
+                self.compose_cmd + ["-f", "db-composer.yml", "up", "-d"],
+                check=True,
+                skip_when_completed=False,
+            )
+            self._run_step("wait_for_db", self.wait_for_db, skip_when_completed=False)
+
+            if not (resumed and database_restored):
+                local_source, _ = self._run_step("download_source", self.download_or_copy_source)
+                if self.state and local_source:
+                    self.state_service.set_value(self.state, "local_source_path", local_source)
+
+                file_type, _ = self._run_step("process_source", self.process_source_file, local_source)
+                if self.state and file_type:
+                    self.state_service.set_value(self.state, "source_file_type", file_type)
+
+                self._run_step("restore_database", self.restore_database, file_type)
+                if self.state:
+                    self.state_service.set_value(self.state, "database_restored", True)
+
+                current_ver_str, _ = self._run_step("detect_current_version", self.get_current_version)
+                if self.state and current_ver_str:
+                    self.state_service.set_current_version(self.state, current_ver_str)
+            else:
+                logger.info("Resuming from restored database state at version: %s", current_ver_str or "<unknown>")
+                if not current_ver_str:
+                    current_ver_str, _ = self._run_step("detect_current_version", self.get_current_version)
+                    if self.state and current_ver_str:
+                        self.state_service.set_current_version(self.state, current_ver_str)
+
             if not current_ver_str:
                 raise UpgraderError(
                     "Could not determine database version after restore. "
@@ -427,15 +557,11 @@ class OdooUpgrader:
 
                 if current_ver.major == target_ver.major:
                     console.print("[green]Target version reached![/green]")
-                    self.finalize_package()
-                    self.cleanup_artifacts()
-                    return 0
+                    break
 
                 if current_ver.major > target_ver.major:
                     console.print("[yellow]Current version is already higher than target.[/yellow]")
-                    self.finalize_package()
-                    self.cleanup_artifacts()
-                    return 0
+                    break
 
                 next_ver_str = self.generate_next_version(current_ver_str)
 
@@ -444,13 +570,18 @@ class OdooUpgrader:
                         f"No supported upgrade step found from {current_ver_str} to {self.target_version}."
                     )
 
-                if not self.run_upgrade_step(next_ver_str):
+                step_name = f"upgrade_to_{next_ver_str}"
+                upgrade_result, _ = self._run_step(step_name, self.run_upgrade_step, next_ver_str)
+                if not upgrade_result:
                     raise UpgraderError(
                         f"Upgrade step to {next_ver_str} failed. "
                         "Review container logs in output/odoo.log and retry."
                     )
 
-                new_ver_str = self.get_current_version()
+                new_ver_str, _ = self._run_step(
+                    f"detect_current_version_{next_ver_str}",
+                    self.get_current_version,
+                )
                 if not new_ver_str:
                     raise UpgraderError(
                         "Could not determine database version after upgrade step. "
@@ -464,19 +595,49 @@ class OdooUpgrader:
                     )
 
                 current_ver_str = new_ver_str
+                if self.state:
+                    self.state_service.set_current_version(self.state, current_ver_str)
                 console.print(f"[blue]Database is now at version: {current_ver_str}[/blue]")
+
+            self._run_step("finalize_package", self.finalize_package)
+            self._run_step("cleanup_artifacts", self.cleanup_artifacts)
+            if self.state:
+                self.state_service.mark_status(self.state, "success")
+            exit_code = 0
+            return exit_code
 
         except KeyboardInterrupt:
             console.print("[bold red]Operation cancelled by user.[/bold red]")
             logger.info("Operation cancelled by user")
-            return 1
+            if self.state:
+                self.state_service.mark_status(self.state, "aborted", "Operation cancelled by user.")
+            exit_code = 1
+            return exit_code
         except UpgraderError as exc:
             console.print(f"[bold red]Error:[/bold red] {exc}")
             logger.error(str(exc))
-            return 1
+            if self.state:
+                failed_step = self.current_step_name or "run"
+                self.state_service.mark_step_failed(self.state, failed_step, str(exc))
+                self.state_service.mark_status(self.state, "failed", str(exc))
+            preserve_runtime_for_resume = self.resume
+            exit_code = 1
+            return exit_code
         except Exception as exc:
             console.print(f"[bold red]Unexpected error:[/bold red] {exc}")
             logger.exception("Unexpected error")
-            return 1
+            if self.state:
+                failed_step = self.current_step_name or "run"
+                self.state_service.mark_step_failed(self.state, failed_step, str(exc))
+                self.state_service.mark_status(self.state, "failed", str(exc))
+            preserve_runtime_for_resume = self.resume
+            exit_code = 1
+            return exit_code
         finally:
-            self.cleanup()
+            if preserve_runtime_for_resume:
+                logger.warning(
+                    "Preserving runtime artifacts and containers for resume mode. "
+                    "Run again with --resume to continue from the last completed step."
+                )
+            else:
+                self.cleanup()
