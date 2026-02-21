@@ -1,15 +1,15 @@
-name: OdooUpgrade Installation Test on Windows
+name: CI
 
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: ["main", "dev"]
     paths:
       - "src/**"
       - "tests/**"
       - "pyproject.toml"
       - ".github/workflows/**"
   pull_request:
-    branches: [ "main", "dev" ]
+    branches: ["main", "dev"]
     paths:
       - "src/**"
       - "tests/**"
@@ -17,32 +17,34 @@ on:
       - ".github/workflows/**"
 
 jobs:
-  smoke-test:
-    name: Install Check - Py${{ matrix.python-version }}
-    runs-on: windows-latest
+  quality:
+    name: Quality - Py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          cache: pip
 
-      - name: Install OdooUpgrade
-        shell: pwsh
+      - name: Install dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install .
+          pip install pytest
 
-      - name: Verify CLI Entry Point
-        shell: pwsh
-        run: |
-          # This proves the executable was created and library paths are correct
-          odooupgrader --help
+      - name: Syntax check
+        run: python -m compileall -q src
+
+      - name: Unit tests
+        env:
+          PYTHONPATH: src
+        run: pytest -q

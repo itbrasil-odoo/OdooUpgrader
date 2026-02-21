@@ -5,10 +5,16 @@ on:
     branches: [ "main", "dev" ]
     paths:
       - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/**"
   pull_request:
     branches: [ "main", "dev" ]
     paths:
       - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/**"
 
 jobs:
   smoke-test:
