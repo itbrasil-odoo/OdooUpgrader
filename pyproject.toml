@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odooupgrader"
-version = "0.6.0"
+version = "0.7.0"
 description = "Docker-based Odoo database migration tool using OpenUpgrade framework"
 authors = [{name = "Fasil", email = "fasilwdr@hotmail.com"}]
 readme = "README.md"
