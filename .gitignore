@@ -174,3 +174,4 @@ uv.lock
 
 # Local deterministic fixture workspace (generated during manual integration tests)
 .fixtures-local/
+.fixtures-local*/
